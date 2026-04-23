@@ -23,7 +23,7 @@ variables:
     default: procurement
   warehouse_id:
     description: ID of the StandardSqlWarehouse.
-    default: CHANGE_ME
+    default: 97236bc440233966 
   app_name:
     description: Databricks Apps name.
     default: livezerobus
@@ -48,14 +48,15 @@ targets:
     mode: development
     default: true
     workspace:
-      host: https://CHANGE_ME.azuredatabricks.net
-    run_as:
-      service_principal_name: ${var.service_principal}
+      host: https://adb-5347428297913551.11.azuredatabricks.net
+    # NOTE: Databricks Apps must be owned by the deploying identity, so
+    # `run_as` cannot be set at the target level when the bundle contains
+    # an app. Jobs that should run as the service principal can set
+    # `run_as` individually under resources.jobs.<name>.run_as — see the
+    # commented examples in resources/jobs.yml.
 
   prod:
     mode: production
     workspace:
-      host: https://CHANGE_ME.azuredatabricks.net
+      host: https://adb-5347428297913551.11.azuredatabricks.net
       root_path: /Workspace/Shared/livezerobus
-    run_as:
-      service_principal_name: ${var.service_principal}

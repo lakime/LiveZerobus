@@ -1,4 +1,15 @@
 # Supporting jobs — UC bootstrap, ML training, Lakebase sync, simulators.
+#
+# If you want individual jobs to run as the service principal instead of
+# as the deploying user, add a per-job block like:
+#
+#   setup_unity_catalog:
+#     run_as:
+#       service_principal_name: ${var.service_principal}
+#     ...
+#
+# You cannot set run_as at the target level while the bundle also ships
+# an App — Apps must be owned by the deploying identity.
 
 resources:
   jobs:
