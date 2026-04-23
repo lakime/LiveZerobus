@@ -1,0 +1,21 @@
+# Databricks App — binds the FastAPI+React app to the existing `livezerobus` app slot.
+
+resources:
+  apps:
+    deploy_app:
+      name: ${var.app_name}
+      description: "LiveZerobus — Auto Procurement demo (React + FastAPI)"
+
+      source_code_path: ../         # uploads the whole repo; app.yaml at root picks it up
+
+      resources:
+        - name: lakebase
+          description: Lakebase Postgres with live.* synced tables
+          database:
+            database_name: ${var.lakebase_instance}
+            permission: CAN_CONNECT_AND_CREATE
+        - name: sql_warehouse
+          description: SQL warehouse used by setup/bootstrap scripts
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE

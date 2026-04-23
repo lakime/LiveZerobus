@@ -1,0 +1,40 @@
+# Lakebase Synced Table definitions.
+# Applied by lakebase_sync/apply.py via the Lakebase REST API.
+#
+# Each entry describes one Delta -> Postgres synced table.
+# scheduling_policy:
+#   CONTINUOUS    → low-latency change-data stream (best for dashboards)
+#   SNAPSHOT      → full refresh every N seconds (cheaper)
+#   TRIGGERED     → on-demand only
+
+instance: ${lakebase_instance}        # e.g. databricks_postgres
+target_branch: ${lakebase_branch}     # e.g. production
+target_schema: live
+
+tables:
+
+  - source: ${catalog}.${schema}.gd_inventory_snapshot
+    target: inventory_snapshot
+    primary_keys: [sku, dc_id]
+    scheduling_policy: CONTINUOUS
+
+  - source: ${catalog}.${schema}.gd_supplier_leaderboard
+    target: supplier_leaderboard
+    primary_keys: [sku, supplier_id]
+    scheduling_policy: CONTINUOUS
+
+  - source: ${catalog}.${schema}.gd_commodity_latest
+    target: commodity_prices_latest
+    primary_keys: [commodity]
+    scheduling_policy: CONTINUOUS
+
+  - source: ${catalog}.${schema}.gd_demand_1h
+    target: demand_1h
+    primary_keys: [sku, hour_ts]
+    scheduling_policy: SNAPSHOT
+    snapshot_interval_seconds: 60
+
+  - source: ${catalog}.${schema}.gd_procurement_recommendations
+    target: procurement_recommendations
+    primary_keys: [recommendation_id]
+    scheduling_policy: CONTINUOUS

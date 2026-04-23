@@ -1,0 +1,32 @@
+# Lakeflow Spark Declarative Pipeline — Bronze → Silver → Gold + ML scoring
+# Everything in pipelines/ is declared with pyspark.pipelines (SDP), not DLT.
+
+resources:
+  pipelines:
+    procurement_dlt:                          # keep the run name for continuity
+      name: livezerobus_procurement_sdp
+      edition: advanced
+      continuous: true
+      photon: true
+      catalog: ${var.catalog}
+      target: ${var.schema}
+
+      libraries:
+        - file:
+            path: ../pipelines/bronze_to_silver.py
+        - file:
+            path: ../pipelines/silver_to_gold.py
+        - file:
+            path: ../pipelines/auto_procurement_scoring.py
+
+      configuration:
+        pipelines.catalog: ${var.catalog}
+        pipelines.schema:  ${var.schema}
+        pipelines.model_name: ${var.model_name}
+
+      clusters:
+        - label: default
+          autoscale:
+            min_workers: 1
+            max_workers: 4
+          node_type_id: Standard_D4ds_v5

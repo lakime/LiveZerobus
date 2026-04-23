@@ -1,0 +1,30 @@
+# Databricks Apps manifest.
+# Built artifact layout expected at deploy time:
+#   backend/app/          ← FastAPI source
+#   backend/requirements.txt
+#   frontend/dist/        ← compiled React bundle (run `npm run build` first)
+
+command:
+  - uvicorn
+  - app.main:app
+  - --host
+  - 0.0.0.0
+  - --port
+  - "8000"
+
+env:
+  # These are populated from Databricks Apps "resources" bindings.
+  # The service principal running the app gets a short-lived OAuth token
+  # usable as the Lakebase Postgres password (see backend/app/lakebase.py).
+  - name: PGHOST
+    valueFrom: lakebase.host
+  - name: PGPORT
+    valueFrom: lakebase.port
+  - name: PGDATABASE
+    valueFrom: lakebase.database
+  - name: PGUSER
+    valueFrom: lakebase.user
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql_warehouse.id
+  - name: FRONTEND_DIST
+    value: /app/frontend/dist

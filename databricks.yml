@@ -1,0 +1,61 @@
+# Databricks Asset Bundle — LiveZerobus Auto Procurement demo
+#
+# Deploy everything with:
+#   databricks bundle deploy -t dev
+#
+# Individual runnables:
+#   databricks bundle run setup_unity_catalog -t dev
+#   databricks bundle run train_supplier_model -t dev
+#   databricks bundle run procurement_dlt      -t dev
+#   databricks bundle run lakebase_sync        -t dev
+#   databricks bundle run simulators_job       -t dev
+#   databricks bundle run deploy_app           -t dev
+
+bundle:
+  name: livezerobus
+
+variables:
+  catalog:
+    description: Unity Catalog catalog for all tables.
+    default: main
+  schema:
+    description: Schema holding bronze/silver/gold tables.
+    default: procurement
+  warehouse_id:
+    description: ID of the StandardSqlWarehouse.
+    default: CHANGE_ME
+  app_name:
+    description: Databricks Apps name.
+    default: livezerobus
+  lakebase_instance:
+    description: Name of the Lakebase database instance.
+    default: databricks_postgres
+  lakebase_branch:
+    description: Lakebase branch to sync into.
+    default: production
+  service_principal:
+    description: Service principal running the app and jobs.
+    default: app-3dxwqo
+  model_name:
+    description: Registered Unity Catalog model name.
+    default: main.procurement.supplier_scoring_model
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://CHANGE_ME.azuredatabricks.net
+    run_as:
+      service_principal_name: ${var.service_principal}
+
+  prod:
+    mode: production
+    workspace:
+      host: https://CHANGE_ME.azuredatabricks.net
+      root_path: /Workspace/Shared/livezerobus
+    run_as:
+      service_principal_name: ${var.service_principal}
