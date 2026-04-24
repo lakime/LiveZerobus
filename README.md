@@ -161,11 +161,19 @@ are written directly by the FastAPI agents.
 cd simulators
 pip install -r requirements.txt
 export DATABRICKS_HOST=https://<your-workspace>.azuredatabricks.net
-export DATABRICKS_CLIENT_ID=<service-principal-client-id>
-export DATABRICKS_CLIENT_SECRET=<service-principal-secret>
+export DATABRICKS_CLIENT_ID=<sp-app-id>
+export DATABRICKS_CLIENT_SECRET=<sp-secret>
 export ZEROBUS_ENDPOINT=<workspace>.zerobus.<region>.azuredatabricks.net:443
 python run_all.py --catalog livezerobus --schema procurement --rate 20
 ```
+
+> `<sp-app-id>` and `<sp-secret>` are the Application ID and OAuth secret
+> of the service principal with `MODIFY` on the four `bz_*` tables.
+> Where you fetch the secret from depends on whether the SP is
+> **Databricks-managed** (Account Console → Service principals →
+> Secrets) or **Entra-managed** (Azure Portal → Entra ID →
+> Certificates & secrets). See [`DEPLOY.md` → Service Principal
+> setup](DEPLOY.md#service-principal-setup) for the full grants matrix.
 
 ### 6. Deploy the Databricks App
 
