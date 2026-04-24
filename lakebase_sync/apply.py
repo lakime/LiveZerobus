@@ -46,7 +46,7 @@ def _apply_postgres_schema(w: WorkspaceClient, instance: str, branch: str) -> No
 
 
 def main() -> int:
-    catalog = os.environ.get("UC_CATALOG", "main")
+    catalog = os.environ.get("UC_CATALOG", "livezerobus")
     schema = os.environ.get("UC_SCHEMA", "procurement")
     instance = os.environ.get("LAKEBASE_INSTANCE", "databricks_postgres")
     branch = os.environ.get("LAKEBASE_BRANCH", "production")

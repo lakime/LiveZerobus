@@ -40,7 +40,7 @@ def _run_sql_file(w: WorkspaceClient, warehouse_id: str, path: pathlib.Path, par
 
 
 def main() -> int:
-    catalog = os.environ.get("UC_CATALOG", "main")
+    catalog = os.environ.get("UC_CATALOG", "livezerobus")
     schema = os.environ.get("UC_SCHEMA", "procurement")
     warehouse_id = os.environ["DATABRICKS_WAREHOUSE_ID"]
     service_principal = os.environ.get("SERVICE_PRINCIPAL", "app-3dxwqo")

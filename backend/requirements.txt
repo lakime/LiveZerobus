@@ -4,3 +4,7 @@ psycopg[binary,pool]>=3.2.0
 databricks-sdk>=0.45.0
 pydantic>=2.8.0
 python-dotenv>=1.0.0
+# Foundation Model API client (uses the OpenAI-compatible endpoint exposed
+# by Databricks serving, reachable via the app's service-principal OAuth).
+openai>=1.40.0
+httpx>=0.27.0

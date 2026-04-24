@@ -15,24 +15,27 @@ export default function CommodityChart({ tick }: { tick: number }) {
       setSeries((prev) => {
         const next = prev.slice(-59);
         const sample: Sample = { t };
-        for (const r of rows) sample[r.commodity] = r.price_usd;
+        for (const r of rows) sample[r.input_key] = r.price_usd;
         next.push(sample);
         return next;
       });
     }).catch(() => {});
   }, [tick]);
 
-  const commodities = latest.map(r => r.commodity);
+  const inputs = latest.map(r => r.input_key);
   const colors: Record<string, string> = {
-    steel: "#4ea1ff", copper: "#ff9f43", oil: "#ef4a4a", wheat: "#f2b840",
+    coco_coir: "#5bc29e", peat: "#a07858", rockwool: "#c7b3a6",
+    nutrient_pack: "#4ea1ff", kwh: "#f2b840",
   };
 
   return (
     <>
       <div style={{ display: "flex", gap: 18, marginBottom: 8, flexWrap: "wrap" }}>
         {latest.map(r => (
-          <div key={r.commodity}>
-            <div className="muted" style={{ fontSize: 11, textTransform: "uppercase" }}>{r.commodity}</div>
+          <div key={r.input_key}>
+            <div className="muted" style={{ fontSize: 11, textTransform: "uppercase" }}>
+              {r.input_key}{r.unit ? ` · ${r.unit}` : ""}
+            </div>
             <div style={{ fontSize: 16, fontWeight: 600 }}>
               ${r.price_usd.toFixed(2)}{" "}
               <span className={(r.pct_24h ?? 0) >= 0 ? "pos" : "neg"} style={{ fontSize: 12 }}>
@@ -49,7 +52,7 @@ export default function CommodityChart({ tick }: { tick: number }) {
           <YAxis stroke="#8a97b8" fontSize={11} tick={{ fill: "#8a97b8" }} />
           <Tooltip contentStyle={{ background: "#141a2f", border: "1px solid #263056" }} />
           <Legend wrapperStyle={{ fontSize: 11 }} />
-          {commodities.map(c => (
+          {inputs.map(c => (
             <Line key={c} dataKey={c} stroke={colors[c] ?? "#4ea1ff"} dot={false} strokeWidth={2} />
           ))}
         </LineChart>

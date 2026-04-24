@@ -1,0 +1,43 @@
+# Databricks Apps manifest.
+#
+# Layout at deploy time (source_code_path = ./backend):
+#   /app/                       ← on the running container
+#     app.yaml                  ← this file
+#     requirements.txt          ← Python deps (installed automatically)
+#     app/                      ← FastAPI package (matches `app.main:app`)
+#       main.py
+#       lakebase.py
+#       routes/
+#     static/                   ← compiled React bundle
+#                                 (run scripts/build_frontend.sh before deploy)
+#
+# Env vars for Lakebase are set at deploy time with:
+#   databricks apps update livezerobus \
+#     --env PGHOST=<instance-host>.database.cloud.databricks.com \
+#     --env PGUSER=<service-principal-uuid>
+# The backend mints its own short-lived OAuth token for the Postgres password
+# via the Databricks SDK — we only need host + user here.
+
+command:
+  - uvicorn
+  - app.main:app
+  - --host
+  - 0.0.0.0
+  - --port
+  - "8000"
+
+env:
+  - name: PGHOST
+    value: CHANGE_ME.database.cloud.databricks.com
+  - name: PGPORT
+    value: "5432"
+  - name: PGDATABASE
+    value: databricks_postgres
+  - name: PGUSER
+    value: CHANGE_ME-service-principal-uuid
+  - name: FRONTEND_DIST
+    value: static
+  - name: FM_MODEL
+    value: databricks-meta-llama-3-3-70b-instruct
+  - name: BUDGET_MONTHLY_USD
+    value: "25000"

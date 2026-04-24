@@ -6,6 +6,13 @@
 #   CONTINUOUS    → low-latency change-data stream (best for dashboards)
 #   SNAPSHOT      → full refresh every N seconds (cheaper)
 #   TRIGGERED     → on-demand only
+#
+# Vertical-Farm Seed Procurement demo — only the Gold-layer tables are
+# Delta-synced. The agent-state tables (email_inbox/outbox, po_drafts,
+# budget_ledger, supplier_applications, invoice_reconciliations,
+# agent_runs) are native Postgres tables in Lakebase — the FastAPI
+# agents read/write them directly, so they do not sync from Delta.
+# Their DDL lives in schemas/lakebase_schema.sql.
 
 instance: ${lakebase_instance}        # e.g. databricks_postgres
 target_branch: ${lakebase_branch}     # e.g. production
@@ -15,7 +22,7 @@ tables:
 
   - source: ${catalog}.${schema}.gd_inventory_snapshot
     target: inventory_snapshot
-    primary_keys: [sku, dc_id]
+    primary_keys: [sku, room_id]
     scheduling_policy: CONTINUOUS
 
   - source: ${catalog}.${schema}.gd_supplier_leaderboard
@@ -25,7 +32,7 @@ tables:
 
   - source: ${catalog}.${schema}.gd_commodity_latest
     target: commodity_prices_latest
-    primary_keys: [commodity]
+    primary_keys: [input_key]
     scheduling_policy: CONTINUOUS
 
   - source: ${catalog}.${schema}.gd_demand_1h

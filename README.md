@@ -1,6 +1,12 @@
-# LiveZerobus — Auto Procurement Demo on Databricks
+# LiveZerobus — Vertical-Farm Seed Procurement Demo on Databricks
 
-Live, end-to-end Auto Procurement demo built with **Databricks Apps** (React + FastAPI), **Zerobus** ingestion, **Delta Lake** medallion storage via **Lakeflow Spark Declarative Pipelines** (`pyspark.pipelines`), **MLflow-registered** supplier scoring in Unity Catalog, and **Lakebase** (managed Postgres) for millisecond reads from the app.
+Live, end-to-end Auto Procurement demo for a vertical farm built with
+**Databricks Apps** (React + FastAPI), **Zerobus** ingestion, **Delta Lake**
+medallion storage via **Lakeflow Spark Declarative Pipelines**
+(`pyspark.pipelines`), **MLflow-registered** seed-house scoring in Unity
+Catalog, **Lakebase** (managed Postgres) for millisecond reads, and an
+agent layer backed by the **Databricks Foundation Model API** for
+supplier negotiation and admin tasks.
 
 ```
                                 ┌─────────────────────────────────────────┐
@@ -11,40 +17,57 @@ Live, end-to-end Auto Procurement demo built with **Databricks Apps** (React + F
                                 │  SDP Silver  (pyspark.pipelines)        │
                                 │              │                          │
                                 │              ▼                          │
-                                │  SDP Gold + MLflow supplier scoring     │
+                                │  SDP Gold + MLflow seed-house scoring   │
                                 │              │                          │
                                 │              ▼                          │
-                                │  Synced Tables  ──►  Lakebase (Postgres)│
-                                └──────────────────────────────┬──────────┘
-                                                               │ SQL
-                                                               ▼
-                                                    ┌─────────────────────┐
-                                                    │ Databricks App      │
-                                                    │ FastAPI + React     │
-                                                    │ (livezerobus...)    │
-                                                    └─────────────────────┘
+                                │  Synced Tables ──► Lakebase (Postgres)  │
+                                │                      │                  │
+                                │                      ▼                  │
+                                │       ┌───────────────────────┐         │
+                                │       │  Databricks App       │         │
+                                │       │  FastAPI + React      │         │
+                                │       │  + Agents (FM API)    │         │
+                                │       └───────────────────────┘         │
+                                └─────────────────────────────────────────┘
 ```
 
 ## What you get
 
-Four simulated data streams → Zerobus → Delta Bronze → Silver → Gold (all Silver/Gold declared with Lakeflow **Spark Declarative Pipelines** using `pyspark.pipelines`) with ML-scored procurement decisions → Lakebase Postgres → FastAPI → React dashboard.
+Four simulated data streams → Zerobus → Delta Bronze → Silver → Gold (all
+Silver/Gold declared with Lakeflow **Spark Declarative Pipelines** using
+`pyspark.pipelines`) with ML-scored reorder decisions → Lakebase Postgres
+→ FastAPI → React dashboard, plus five agents that handle email
+negotiation, PO drafting, budget gating, supplier onboarding, and invoice
+reconciliation.
 
 | Stream | What it simulates | Zerobus table |
 |---|---|---|
-| `inventory_events` | Warehouse stock movement per SKU/DC | `main.procurement.bz_inventory_events` |
-| `supplier_quotes` | Rolling price+lead-time quotes from N suppliers per SKU | `main.procurement.bz_supplier_quotes` |
-| `demand_events` | POS / order events driving demand | `main.procurement.bz_demand_events` |
-| `commodity_prices` | Raw-material market prices (steel, copper, oil, wheat) | `main.procurement.bz_commodity_prices` |
+| `inventory_events` | Seed-stock movements (grams) per SKU / grow-room | `livezerobus.procurement.bz_inventory_events` |
+| `supplier_quotes` | Rolling seed-pack quotes from 10 seed houses | `livezerobus.procurement.bz_supplier_quotes` |
+| `demand_events` | Planting schedule (trays + grams required) | `livezerobus.procurement.bz_demand_events` |
+| `commodity_prices` | Grow-input prices (coco coir, peat, rockwool, nutrient packs, kWh) | `livezerobus.procurement.bz_commodity_prices` |
+
+### Agents
+
+| Agent | Trigger | Output |
+|---|---|---|
+| `negotiator` | Open recommendation w/o RFQ; inbound supplier email | Outbox RFQs / extracted inbound intent |
+| `po_drafter` | Thread with QUOTE / ACCEPT | `po_drafts` rows (`DRAFT`) |
+| `budget_gate` | New DRAFT PO | `APPROVED` or `REJECTED` with rationale |
+| `supplier_onboarding` | New application via UI | 0–1 score, verdict |
+| `invoice_reconciler` | Invoice vs. PO | `OK` / `REVIEW` / `DISPUTE` |
 
 ## Prerequisites
 
 You already have:
 
 - GitHub repo: <https://github.com/lakime/LiveZerobus>
-- Databricks App: `livezerobus` at <https://livezerobus-5347428297913551.11.azure.databricksapps.com>
+- Databricks App: `livezerobus` (URL shown in your workspace under Compute → Apps)
 - Service principal: `app-3dxwqo livezerobus`
 - SQL warehouse: `StandardSqlWarehouse`
 - Lakebase Postgres: `databricks_postgres`, branch `production`
+- Foundation Model API enabled on the workspace
+  (`databricks-meta-llama-3-3-70b-instruct` serving endpoint)
 
 Install locally (one-time):
 
@@ -63,130 +86,129 @@ node --version      # 20+
 
 ## Step-by-step: from empty repo to live demo
 
-### 1. Clone and push this scaffold
+### 1. Create Unity Catalog schema + Zerobus tables + agent-state tables
+
+Open the Databricks **SQL Editor**, paste the contents of
+`schemas/setup.sql`, and Run. This creates:
+
+- Catalog `livezerobus`, schema `procurement`
+- Four Bronze Zerobus-ingestible Delta tables (`bz_*`) with
+  `appendOnly=true` + `columnMapping=name`
+- Two dimension tables (`dim_sku` with 20 seed varieties,
+  `dim_supplier` with 10 seed houses) pre-seeded via `MERGE`
+- Seven agent-state Delta tables for email / PO / budget / onboarding /
+  invoices / runs
+
+Then scroll to the `GRANTS` block at the bottom of the file, replace
+`<SP_APP_ID>` with the Application (client) ID of service principal
+`app-3dxwqo livezerobus`, and run that block too.
+
+### 2. Train + register the seed-house scoring model
 
 ```bash
-git clone https://github.com/lakime/LiveZerobus.git
-cd LiveZerobus
-# (copy every file from this scaffold into the clone)
-git add .
-git commit -m "Initial Auto Procurement scaffold"
-git push origin main
+cd ml
+pip install mlflow scikit-learn numpy pandas databricks-sdk
+python train_supplier_model.py
 ```
 
-### 2. Configure the bundle
+Registers `livezerobus.procurement.supplier_scoring_model` in Unity
+Catalog at alias `@prod`. Features: `usd_per_gram`, `pack_size_g`,
+`lead_time_days`, `min_qty`, `on_time_pct`, `quality_score`,
+`demand_1h_trays`, `input_pct_24h`, `organic_cert_int`.
 
-Edit `databricks.yml` and set:
+### 3. Create the Lakeflow Spark Declarative Pipeline
 
-- `workspace.host` — your workspace URL
-- `variables.catalog.default` — Unity Catalog catalog (default `main`)
-- `variables.schema.default` — schema (default `procurement`)
-- `variables.warehouse_id.default` — ID of `StandardSqlWarehouse`
-- `variables.app_name.default` — `livezerobus`
-- `variables.lakebase_instance.default` — name of your Lakebase instance
+In the Databricks UI → **Pipelines → Create pipeline**:
 
-Find the warehouse ID with:
+- **Source**: point at the `pipelines/` folder in this repo
+- **Target catalog**: `livezerobus`, **target schema**: `procurement`
+- **Configuration**:
+  - `pipelines.catalog` = `livezerobus`
+  - `pipelines.schema`  = `procurement`
+  - `livezerobus.model_name` = `livezerobus.procurement.supplier_scoring_model`
+- **Channel**: `preview` (for `pyspark.pipelines`)
+
+Start it. The pipeline runs continuously:
+
+- Bronze → Silver (`sv_*`, cleanse + dedupe + expect)
+- Silver → Gold (`gd_*`, inventory snapshot, supplier leaderboard, 1h demand)
+- Gold → `gd_procurement_recommendations` (ML-scored reorder decisions)
+
+### 4. Provision Lakebase synced tables
 
 ```bash
-databricks warehouses list -o json | jq '.[] | select(.name=="StandardSqlWarehouse") | .id'
+cd lakebase_sync
+pip install -r ../backend/requirements.txt
+python apply.py \
+  --catalog livezerobus \
+  --schema procurement \
+  --lakebase-instance databricks_postgres \
+  --lakebase-branch production
 ```
 
-### 3. Create Unity Catalog schema + Zerobus tables
+Creates synced tables for `inventory_snapshot`, `supplier_leaderboard`,
+`commodity_prices_latest`, `demand_1h`, `procurement_recommendations`.
 
-```bash
-databricks bundle deploy -t dev
-databricks bundle run setup_unity_catalog -t dev
-```
+Then apply the Postgres-side DDL from `schemas/lakebase_schema.sql` via
+the Lakebase SQL editor — it creates the seven **agent-state** tables
+(`email_inbox`, `email_outbox`, `po_drafts`, `budget_ledger`,
+`supplier_applications`, `invoice_reconciliations`, `agent_runs`) that
+are written directly by the FastAPI agents.
 
-This runs `scripts/setup_unity_catalog.py` which creates:
-
-- Catalog/schema (if missing)
-- 4 Bronze Zerobus-ingestible Delta tables (`bz_*`) with append-only properties
-- Grants for the app service principal `app-3dxwqo`
-
-### 4. Train + register the supplier-scoring model
-
-```bash
-databricks bundle run train_supplier_model -t dev
-```
-
-Registers `main.procurement.supplier_scoring_model` in Unity Catalog (MLflow).
-
-### 5. Start the Lakeflow Spark Declarative Pipeline
-
-```bash
-databricks bundle run procurement_dlt -t dev   # bundle key kept for continuity
-```
-
-It runs continuously (all tables declared with `pyspark.pipelines`):
-
-- Bronze → Silver (cleanse, dedupe, schema-enforce)
-- Silver → Gold (rolling inventory, supplier leaderboards, demand aggregates)
-- Gold → `gd_procurement_recommendations` (ML-scored reorder decisions via MLflow Unity-Catalog model)
-
-### 6. Provision Lakebase sync
-
-```bash
-databricks bundle run lakebase_sync -t dev
-```
-
-Creates synced tables in `databricks_postgres` (production branch) for:
-
-- `inventory_snapshot`
-- `supplier_leaderboard`
-- `commodity_prices_latest`
-- `demand_1h`
-- `procurement_recommendations`
-
-### 7. Run the simulators (locally or as a Databricks Job)
-
-**Locally** (easiest for demo iteration):
+### 5. Run the simulators (locally)
 
 ```bash
 cd simulators
 pip install -r requirements.txt
-export DATABRICKS_HOST=https://<workspace>.azuredatabricks.net
+export DATABRICKS_HOST=https://<your-workspace>.azuredatabricks.net
 export DATABRICKS_CLIENT_ID=<service-principal-client-id>
 export DATABRICKS_CLIENT_SECRET=<service-principal-secret>
 export ZEROBUS_ENDPOINT=<workspace>.zerobus.<region>.azuredatabricks.net:443
-python run_all.py --catalog main --schema procurement --rate 20
+python run_all.py --catalog livezerobus --schema procurement --rate 20
 ```
 
-Or run as a Databricks Job (already wired in `resources/jobs.yml`):
+### 6. Deploy the Databricks App
 
 ```bash
-databricks bundle run simulators_job -t dev
+./scripts/deploy_app.sh
 ```
 
-### 8. Deploy the Databricks App
+That runs `scripts/build_frontend.sh` (which does `npm install + build`
+in `frontend/` and copies `frontend/dist/` into `backend/static/`),
+`databricks sync` into the app's workspace path, then
+`databricks apps deploy livezerobus`.
 
-```bash
-# Build the React frontend
-cd frontend && npm install && npm run build && cd ..
+Open the App's URL (from the Databricks UI → Compute → Apps → `livezerobus`)
+— you should see live tiles updating every few seconds, six tabs, and the
+**Run agent cycle** button in the header.
 
-# Deploy the app source + start it
-databricks bundle run deploy_app -t dev
-databricks apps start livezerobus
-```
-
-Open <https://livezerobus-5347428297913551.11.azure.databricksapps.com> — you should see live tiles updating every few seconds.
+See [`DEPLOY.md`](DEPLOY.md) for troubleshooting and env-var overrides.
 
 ## Layout
 
 ```
 LiveZerobus/
 ├── README.md                  ← you are here
-├── databricks.yml             ← Databricks Asset Bundle root
-├── app.yaml                   ← Databricks Apps manifest
-├── backend/                   ← FastAPI + Lakebase connection
-├── frontend/                  ← React + Vite + TypeScript
+├── DEPLOY.md                  ← one-command app deploy runbook
+├── backend/                   ← FastAPI + Lakebase + agents
+│   ├── app.yaml               ← Databricks Apps manifest
+│   ├── requirements.txt
+│   └── app/
+│       ├── main.py
+│       ├── lakebase.py
+│       ├── routes/{data,agents}.py
+│       └── agents/            ← FM API client + 5 agents
+├── frontend/                  ← React + Vite + TypeScript (6 tabs)
 ├── simulators/                ← 4 Zerobus data producers
-├── schemas/                   ← SQL DDL for Bronze / Lakebase
-├── pipelines/                 ← Spark Declarative Pipelines medallion + ML scoring
-├── ml/                        ← Train & register supplier model
+├── schemas/
+│   ├── setup.sql              ← one-shot UC setup
+│   ├── bronze_tables.sql      ← parameterized Bronze + dims
+│   ├── seed_dimensions.sql    ← 20 seeds + 10 seed houses
+│   └── lakebase_schema.sql    ← Postgres side (Gold mirrors + agent state)
+├── pipelines/                 ← Spark Declarative Pipelines medallion + ML
+├── ml/                        ← Train & register seed-house model
 ├── lakebase_sync/             ← Delta → Postgres synced-table config
-├── resources/                 ← DAB jobs / pipelines / app YAML
-├── scripts/                   ← Bootstrap + setup scripts
+├── scripts/                   ← build_frontend.sh, deploy_app.sh, setup_unity_catalog.py
 └── docs/                      ← Architecture & demo walkthrough
 ```
 
@@ -204,6 +226,7 @@ export DATABRICKS_CLIENT_SECRET=...
 export PGHOST=<lakebase-host>
 export PGDATABASE=databricks_postgres
 export PGUSER=<sp-uuid>
+export FM_MODEL=databricks-meta-llama-3-3-70b-instruct
 uvicorn app.main:app --reload --port 8000
 
 # Terminal 2 — frontend
@@ -214,8 +237,10 @@ npm run dev           # Vite serves on :5173 with a proxy to :8000
 
 ## Clean up
 
-```bash
-databricks bundle destroy -t dev
-```
+Stop/delete the pipeline in the UI, drop synced tables from Lakebase,
+and `databricks apps stop livezerobus`. The Delta tables in Unity
+Catalog are append-only historical data — drop the schema if you want a
+clean slate.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a deeper walk-through and [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) for a 5-minute live demo flow.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a deeper walkthrough
+and [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) for a 7-minute demo flow.

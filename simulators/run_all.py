@@ -1,7 +1,7 @@
 """Run all 4 simulators in parallel threads. Intended for demo use.
 
 Usage:
-    python run_all.py --catalog main --schema procurement --rate 20
+    python run_all.py --catalog livezerobus --schema procurement --rate 20
 
 `--rate` is a global knob: individual simulators scale from it.
 """
@@ -25,7 +25,7 @@ def _run(cmd: List[str], name: str) -> None:
 
 
 @click.command()
-@click.option("--catalog", default="main")
+@click.option("--catalog", default="livezerobus")
 @click.option("--schema", default="procurement")
 @click.option("--rate", default=20, help="Global rate scaler.")
 @click.option("--duration", default=0)

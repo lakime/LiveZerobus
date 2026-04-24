@@ -5,9 +5,12 @@ UC-qualified table and sends protobuf rows whose schema matches the table's
 columns. For demo readability we define the row shapes here as dataclasses
 and serialize to dicts; the SDK compiles a protobuf descriptor on the fly.
 
+This module is the shared vocabulary for the vertical-farm seed-procurement
+demo. See schemas/setup.sql for the matching Delta tables.
+
 If you prefer pre-compiled .proto files, run:
     databricks zerobus compile-schema \\
-        --catalog main --schema procurement --table bz_inventory_events \\
+        --catalog livezerobus --schema procurement --table bz_inventory_events \\
         --out zerobus/generated
 """
 from __future__ import annotations
@@ -111,9 +114,10 @@ class InventoryEvent:
     event_id: str
     event_ts: datetime
     sku: str
-    dc_id: str
-    delta_units: int
-    on_hand: int
+    room_id: str
+    lot_id: str
+    delta_grams: float
+    on_hand_g: float
     reason: str
 
 
@@ -123,10 +127,12 @@ class SupplierQuote:
     event_ts: datetime
     supplier_id: str
     sku: str
+    pack_size_g: float
     unit_price_usd: float
     min_qty: int
     lead_time_days: int
     valid_until_ts: datetime
+    organic: bool
     currency: str
 
 
@@ -135,18 +141,19 @@ class DemandEvent:
     event_id: str
     event_ts: datetime
     sku: str
-    store_id: str
-    qty: int
-    unit_price: float
-    channel: str
+    zone_id: str
+    trays: int
+    grams_req: float
+    crop_plan_id: str
 
 
 @dataclasses.dataclass
 class CommodityPrice:
     event_id: str
     event_ts: datetime
-    commodity: str
+    input_key: str
     price_usd: float
+    unit: str
     currency: str
     source: str
 
@@ -160,13 +167,73 @@ def as_row(obj: Any) -> dict[str, Any]:
 
 
 # --------------------- Shared reference data for simulators -------------------
+# These MUST match dim_sku / dim_supplier in schemas/setup.sql. The simulators
+# use them to generate correlated, plausible event streams.
 
-SKUS = [f"SKU-{i:03d}" for i in range(1, 9)]
-SKU_TO_COMMODITY = {
-    "SKU-001": "steel",   "SKU-002": "copper", "SKU-003": "oil",    "SKU-004": "wheat",
-    "SKU-005": "copper",  "SKU-006": "oil",    "SKU-007": "steel",  "SKU-008": "copper",
+SKUS: list[str] = [
+    "SEED-LETT-BUT-01", "SEED-LETT-RED-01", "SEED-LETT-ROM-01",
+    "SEED-BAS-GEN-01",  "SEED-BAS-THA-01",
+    "SEED-KALE-LAC-01", "SEED-KALE-RED-01",
+    "SEED-ARU-AST-01",  "SEED-SPIN-SPA-01",
+    "SEED-MG-RAD-01",   "SEED-MG-PEA-01",  "SEED-MG-SUN-01",
+    "SEED-MG-BROC-01",  "SEED-MG-AMA-01",
+    "SEED-HERB-CIL-01", "SEED-HERB-PAR-01", "SEED-HERB-DIL-01",
+    "SEED-BOK-SHA-01",  "SEED-MUST-WAS-01", "SEED-TAT-RED-01",
+]
+
+# Links each SKU to the grow-input whose price most affects its total grow cost.
+# Microgreens use more substrate per gram of finished product; lettuces use
+# more nutrients. This lets commodity ticks meaningfully move the ML score.
+SKU_TO_INPUT: dict[str, str] = {
+    "SEED-LETT-BUT-01": "nutrient_pack",
+    "SEED-LETT-RED-01": "nutrient_pack",
+    "SEED-LETT-ROM-01": "nutrient_pack",
+    "SEED-BAS-GEN-01":  "nutrient_pack",
+    "SEED-BAS-THA-01":  "nutrient_pack",
+    "SEED-KALE-LAC-01": "nutrient_pack",
+    "SEED-KALE-RED-01": "nutrient_pack",
+    "SEED-ARU-AST-01":  "coco_coir",
+    "SEED-SPIN-SPA-01": "coco_coir",
+    "SEED-MG-RAD-01":   "coco_coir",
+    "SEED-MG-PEA-01":   "coco_coir",
+    "SEED-MG-SUN-01":   "coco_coir",
+    "SEED-MG-BROC-01":  "coco_coir",
+    "SEED-MG-AMA-01":   "coco_coir",
+    "SEED-HERB-CIL-01": "rockwool",
+    "SEED-HERB-PAR-01": "rockwool",
+    "SEED-HERB-DIL-01": "rockwool",
+    "SEED-BOK-SHA-01":  "nutrient_pack",
+    "SEED-MUST-WAS-01": "nutrient_pack",
+    "SEED-TAT-RED-01":  "nutrient_pack",
 }
-SUPPLIERS = [f"SUP-{i:02d}" for i in range(1, 9)]
-DCS = ["DC-NYC", "DC-LAX", "DC-CHI", "DC-ATL"]
-STORES = [f"STORE-{i:03d}" for i in range(1, 21)]
-COMMODITIES = ["steel", "copper", "oil", "wheat"]
+
+# Average grams of seed needed per tray per SKU. Used by the demand simulator
+# to turn "seed N trays" into "need G grams". Mirrors dim_sku.seed_per_tray_g.
+SKU_SEED_PER_TRAY_G: dict[str, float] = {
+    "SEED-LETT-BUT-01": 0.35, "SEED-LETT-RED-01": 0.32, "SEED-LETT-ROM-01": 0.30,
+    "SEED-BAS-GEN-01":  0.55, "SEED-BAS-THA-01":  0.58,
+    "SEED-KALE-LAC-01": 0.40, "SEED-KALE-RED-01": 0.38,
+    "SEED-ARU-AST-01":  0.45, "SEED-SPIN-SPA-01": 0.80,
+    "SEED-MG-RAD-01":   7.50, "SEED-MG-PEA-01":  18.00, "SEED-MG-SUN-01": 14.00,
+    "SEED-MG-BROC-01":  6.00, "SEED-MG-AMA-01":   2.80,
+    "SEED-HERB-CIL-01": 3.60, "SEED-HERB-PAR-01": 2.50, "SEED-HERB-DIL-01": 2.20,
+    "SEED-BOK-SHA-01":  0.40, "SEED-MUST-WAS-01": 0.70, "SEED-TAT-RED-01":  0.65,
+}
+
+SUPPLIERS: list[str] = [
+    "SUP-JOHNNY", "SUP-HIGHMOW", "SUP-TRUELEAF", "SUP-KITAZAWA", "SUP-RIJK",
+    "SUP-ENZA",   "SUP-VITALIS", "SUP-WESTCOAST", "SUP-KOPPERT",  "SUP-VILMORIN",
+]
+
+# Grow rooms (cold storage + main rooms) and planting zones in the farm.
+ROOMS: list[str] = ["ROOM-COLD", "ROOM-A", "ROOM-B", "ROOM-C"]
+ZONES: list[str] = [f"ZONE-{c}{i:02d}" for c in "AB" for i in range(1, 7)]
+
+# The four grow inputs whose prices the commodity simulator walks.
+INPUTS: list[tuple[str, str]] = [
+    ("coco_coir",      "per_L"),
+    ("peat",           "per_kg"),
+    ("rockwool",       "per_kg"),
+    ("nutrient_pack",  "per_kg"),
+    ("kwh",            "per_kwh"),
+]

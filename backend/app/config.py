@@ -23,6 +23,10 @@ class Settings:
             pgdatabase=os.environ.get("PGDATABASE", "databricks_postgres"),
             pguser=os.environ.get("PGUSER", "app"),
             schema=os.environ.get("PG_SCHEMA", "live"),
-            frontend_dist=os.environ.get("FRONTEND_DIST", "../frontend/dist"),
+            # Default matches the deployed layout where the React bundle has
+            # been copied into backend/static/ by scripts/build_frontend.sh.
+            # For local dev (`uvicorn app.main:app --reload` from backend/),
+            # override with FRONTEND_DIST=../frontend/dist.
+            frontend_dist=os.environ.get("FRONTEND_DIST", "static"),
             refresh_interval_s=int(os.environ.get("REFRESH_INTERVAL_S", "3")),
         )

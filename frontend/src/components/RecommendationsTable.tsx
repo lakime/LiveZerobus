@@ -14,9 +14,10 @@ export default function RecommendationsTable({ tick }: { tick: number }) {
     <table>
       <thead>
         <tr>
-          <th>When</th><th>SKU</th><th>DC</th><th>Qty</th>
-          <th>Supplier</th><th>Unit $</th><th>Total $</th>
-          <th>Lead</th><th>ML</th><th>Trend 24h</th><th>Decision</th>
+          <th>When</th><th>Seed SKU</th><th>Room</th>
+          <th>Reorder</th><th>Packs</th>
+          <th>Supplier</th><th>Pack $</th><th>Total $</th>
+          <th>Lead</th><th>ML</th><th>Input 24h</th><th>Decision</th>
         </tr>
       </thead>
       <tbody>
@@ -24,15 +25,16 @@ export default function RecommendationsTable({ tick }: { tick: number }) {
           <tr key={r.recommendation_id}>
             <td className="muted">{new Date(r.created_ts).toLocaleTimeString()}</td>
             <td>{r.sku}</td>
-            <td>{r.dc_id}</td>
-            <td>{r.reorder_qty}</td>
+            <td>{r.room_id}</td>
+            <td>{r.reorder_grams.toFixed(0)} g</td>
+            <td>{r.packs ?? "—"}</td>
             <td>{r.recommended_supplier_name ?? r.recommended_supplier_id}</td>
             <td>${r.unit_price_usd.toFixed(2)}</td>
             <td>${r.total_cost_usd.toLocaleString()}</td>
             <td>{r.expected_lead_days}d</td>
             <td className="pos">{r.ml_score.toFixed(2)}</td>
-            <td className={(r.commodity_pct_24h ?? 0) >= 0 ? "pos" : "neg"}>
-              {r.commodity_pct_24h != null ? `${(r.commodity_pct_24h * 100).toFixed(2)}%` : "—"}
+            <td className={(r.input_pct_24h ?? 0) >= 0 ? "pos" : "neg"}>
+              {r.input_pct_24h != null ? `${(r.input_pct_24h * 100).toFixed(2)}%` : "—"}
             </td>
             <td>
               <span className={

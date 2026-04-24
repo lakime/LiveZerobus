@@ -15,20 +15,22 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
+from .routes.agents import router as agents_router
 from .routes.data import router as data_router
 
 
 settings = Settings.from_env()
-app = FastAPI(title="LiveZerobus — Auto Procurement", version="0.1.0")
+app = FastAPI(title="LiveZerobus — Seed Procurement", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if os.environ.get("DEV") else [],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
 app.include_router(data_router)
+app.include_router(agents_router)
 
 
 @app.get("/healthz")
