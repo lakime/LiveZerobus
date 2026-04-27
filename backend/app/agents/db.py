@@ -2,7 +2,7 @@
 
 Agents both read and write Lakebase. The existing `app.lakebase.query` helper
 is read-only; here we add an `execute` helper that commits. All writes land
-in the `live.*` schema that the synced Delta source tables back.
+in the `liveoltp.*` schema that the synced Delta source tables back.
 """
 from __future__ import annotations
 

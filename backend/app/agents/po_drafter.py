@@ -2,7 +2,7 @@
 
 When a negotiation thread has an accepted supplier quote (intent QUOTE or
 ACCEPT with plausible pack_size_g + unit_price), promote it to a PO draft
-in `live.po_drafts` with status DRAFT. The budget_gate agent then
+in `liveoltp.po_drafts` with status DRAFT. The budget_gate agent then
 approves or rejects it.
 """
 from __future__ import annotations
@@ -30,17 +30,17 @@ def _candidate_threads(settings: Settings) -> list[dict]:
         settings,
         """WITH latest AS (
              SELECT DISTINCT ON (thread_id) *
-               FROM live.email_inbox
+               FROM liveoltp.email_inbox
               WHERE intent_detected IN ('QUOTE','ACCEPT','COUNTER')
               ORDER BY thread_id, received_ts DESC
            )
            SELECT l.*, o.sku AS out_sku, o.supplier_id AS out_supplier
              FROM latest l
-             JOIN live.email_outbox o
+             JOIN liveoltp.email_outbox o
                ON o.thread_id = l.thread_id
               AND o.intent = 'RFQ'
             WHERE NOT EXISTS (
-                    SELECT 1 FROM live.po_drafts p
+                    SELECT 1 FROM liveoltp.po_drafts p
                      WHERE p.thread_id = l.thread_id
                   )
             ORDER BY l.received_ts DESC
@@ -66,7 +66,7 @@ def run_po_drafter(settings: Settings) -> dict:
         # otherwise fall back to 10 packs so the demo flow always advances.
         rec = db.fetchone(
             settings,
-            """SELECT reorder_grams, packs FROM live.procurement_recommendations
+            """SELECT reorder_grams, packs FROM liveoltp.procurement_recommendations
                 WHERE sku=%s ORDER BY created_ts DESC LIMIT 1""",
             [row["sku"] or row["out_sku"]],
         ) or {}
@@ -78,7 +78,7 @@ def run_po_drafter(settings: Settings) -> dict:
         po_id = _new_id("PO")
         db.execute(
             settings,
-            """INSERT INTO live.po_drafts
+            """INSERT INTO liveoltp.po_drafts
                  (po_id, created_ts, thread_id, sku, supplier_id,
                   packs, pack_size_g, total_grams, unit_price_usd,
                   total_cost_usd, needed_by, status, rationale)

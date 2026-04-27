@@ -1,0 +1,8 @@
+resources:
+  jobs:
+    data_upload_or_validation_job:
+      name: claude-app-dev-data-upload-or-validation
+      tasks:
+        - task_key: upload_or_validate_data
+          notebook_task:
+            notebook_path: ../notebooks/upload_or_validate_data.py

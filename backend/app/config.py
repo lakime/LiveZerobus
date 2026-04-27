@@ -22,7 +22,7 @@ class Settings:
             pgport=int(os.environ.get("PGPORT", "5432")),
             pgdatabase=os.environ.get("PGDATABASE", "databricks_postgres"),
             pguser=os.environ.get("PGUSER", "app"),
-            schema=os.environ.get("PG_SCHEMA", "live"),
+            schema=os.environ.get("PG_SCHEMA", "liveoltp"),
             # Default matches the deployed layout where the React bundle has
             # been copied into backend/static/ by scripts/build_frontend.sh.
             # For local dev (`uvicorn app.main:app --reload` from backend/),

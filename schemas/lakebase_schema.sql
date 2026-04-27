@@ -1,6 +1,6 @@
 -- Target schema in the Lakebase Postgres (databricks_postgres / production).
 --
--- Two flavors of tables live here:
+-- Two flavors of tables live in this schema:
 --
 --  1. Synced-from-Delta (read-only in Postgres) — maintained by the jobs in
 --     lakebase_sync/synced_tables.yml. These mirror Gold Delta tables built
@@ -18,7 +18,7 @@
 -- Run this file once against databricks_postgres/production in the Lakebase
 -- SQL editor after creating the Lakebase instance.
 
-CREATE SCHEMA IF NOT EXISTS live;
+CREATE SCHEMA IF NOT EXISTS liveoltp;
 
 
 -- =================== Seed inventory / planting / market ===================
@@ -27,7 +27,7 @@ CREATE SCHEMA IF NOT EXISTS live;
 -- synced table materialises the full superset of Gold columns; reference
 -- DDL below is for documentation only — Synced Tables manage their own
 -- target schema at apply time.
-CREATE TABLE IF NOT EXISTS live.inventory_snapshot (
+CREATE TABLE IF NOT EXISTS liveoltp.inventory_snapshot (
   sku               TEXT NOT NULL,
   room_id           TEXT NOT NULL,
   on_hand_g         DOUBLE PRECISION NOT NULL,
@@ -41,10 +41,10 @@ CREATE TABLE IF NOT EXISTS live.inventory_snapshot (
   PRIMARY KEY (sku, room_id)
 );
 CREATE INDEX IF NOT EXISTS idx_inventory_snapshot_ts
-  ON live.inventory_snapshot (last_event_ts DESC);
+  ON liveoltp.inventory_snapshot (last_event_ts DESC);
 
 -- Current best N quotes per SKU, ranked by the ML model.
-CREATE TABLE IF NOT EXISTS live.supplier_leaderboard (
+CREATE TABLE IF NOT EXISTS liveoltp.supplier_leaderboard (
   sku             TEXT NOT NULL,
   supplier_id     TEXT NOT NULL,
   supplier_name   TEXT,
@@ -60,10 +60,10 @@ CREATE TABLE IF NOT EXISTS live.supplier_leaderboard (
   PRIMARY KEY (sku, supplier_id)
 );
 CREATE INDEX IF NOT EXISTS idx_leaderboard_sku_rank
-  ON live.supplier_leaderboard (sku, rank);
+  ON liveoltp.supplier_leaderboard (sku, rank);
 
 -- Latest input price per grow-input (coco_coir, nutrient_pack, kwh, ...).
-CREATE TABLE IF NOT EXISTS live.commodity_prices_latest (
+CREATE TABLE IF NOT EXISTS liveoltp.commodity_prices_latest (
   input_key   TEXT PRIMARY KEY,
   price_usd   DOUBLE PRECISION,
   unit        TEXT,
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS live.commodity_prices_latest (
 );
 
 -- 1-hour planting aggregates (grams seeded per SKU per hour).
-CREATE TABLE IF NOT EXISTS live.demand_1h (
+CREATE TABLE IF NOT EXISTS liveoltp.demand_1h (
   sku         TEXT NOT NULL,
   hour_ts     TIMESTAMPTZ NOT NULL,
   trays       INT NOT NULL,
@@ -81,10 +81,10 @@ CREATE TABLE IF NOT EXISTS live.demand_1h (
   PRIMARY KEY (sku, hour_ts)
 );
 CREATE INDEX IF NOT EXISTS idx_demand_1h_hour
-  ON live.demand_1h (hour_ts DESC);
+  ON liveoltp.demand_1h (hour_ts DESC);
 
 -- Final procurement recommendations (scored & ranked).
-CREATE TABLE IF NOT EXISTS live.procurement_recommendations (
+CREATE TABLE IF NOT EXISTS liveoltp.procurement_recommendations (
   recommendation_id TEXT PRIMARY KEY,
   created_ts        TIMESTAMPTZ NOT NULL,
   sku               TEXT NOT NULL,
@@ -103,14 +103,14 @@ CREATE TABLE IF NOT EXISTS live.procurement_recommendations (
   rationale         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_recs_ts
-  ON live.procurement_recommendations (created_ts DESC);
+  ON liveoltp.procurement_recommendations (created_ts DESC);
 CREATE INDEX IF NOT EXISTS idx_recs_sku
-  ON live.procurement_recommendations (sku);
+  ON liveoltp.procurement_recommendations (sku);
 
 
 -- =================== Agent state (email + PO + budget + ops) ===================
 
-CREATE TABLE IF NOT EXISTS live.email_outbox (
+CREATE TABLE IF NOT EXISTS liveoltp.email_outbox (
   email_id        TEXT PRIMARY KEY,
   thread_id       TEXT NOT NULL,
   created_ts      TIMESTAMPTZ NOT NULL,
@@ -123,9 +123,9 @@ CREATE TABLE IF NOT EXISTS live.email_outbox (
   sent_by         TEXT,       -- agent name
   status          TEXT        -- DRAFT | SENT | BOUNCED
 );
-CREATE INDEX IF NOT EXISTS idx_outbox_thread ON live.email_outbox (thread_id, created_ts);
+CREATE INDEX IF NOT EXISTS idx_outbox_thread ON liveoltp.email_outbox (thread_id, created_ts);
 
-CREATE TABLE IF NOT EXISTS live.email_inbox (
+CREATE TABLE IF NOT EXISTS liveoltp.email_inbox (
   email_id        TEXT PRIMARY KEY,
   thread_id       TEXT NOT NULL,
   received_ts     TIMESTAMPTZ NOT NULL,
@@ -138,9 +138,9 @@ CREATE TABLE IF NOT EXISTS live.email_inbox (
   extracted_json  TEXT,
   processed       BOOLEAN
 );
-CREATE INDEX IF NOT EXISTS idx_inbox_thread ON live.email_inbox (thread_id, received_ts);
+CREATE INDEX IF NOT EXISTS idx_inbox_thread ON liveoltp.email_inbox (thread_id, received_ts);
 
-CREATE TABLE IF NOT EXISTS live.po_drafts (
+CREATE TABLE IF NOT EXISTS liveoltp.po_drafts (
   po_id           TEXT PRIMARY KEY,
   created_ts      TIMESTAMPTZ NOT NULL,
   thread_id       TEXT,
@@ -155,9 +155,9 @@ CREATE TABLE IF NOT EXISTS live.po_drafts (
   status          TEXT,       -- DRAFT | APPROVED | REJECTED | SENT | RECEIVED
   rationale       TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_po_status ON live.po_drafts (status, created_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_po_status ON liveoltp.po_drafts (status, created_ts DESC);
 
-CREATE TABLE IF NOT EXISTS live.budget_ledger (
+CREATE TABLE IF NOT EXISTS liveoltp.budget_ledger (
   ledger_id       TEXT PRIMARY KEY,
   entry_ts        TIMESTAMPTZ NOT NULL,
   period_ym       TEXT,
@@ -167,9 +167,9 @@ CREATE TABLE IF NOT EXISTS live.budget_ledger (
   po_id           TEXT,
   note            TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_budget_period ON live.budget_ledger (period_ym, entry_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_budget_period ON liveoltp.budget_ledger (period_ym, entry_ts DESC);
 
-CREATE TABLE IF NOT EXISTS live.supplier_applications (
+CREATE TABLE IF NOT EXISTS liveoltp.supplier_applications (
   application_id  TEXT PRIMARY KEY,
   submitted_ts    TIMESTAMPTZ NOT NULL,
   supplier_name   TEXT,
@@ -183,7 +183,7 @@ CREATE TABLE IF NOT EXISTS live.supplier_applications (
   agent_notes     TEXT
 );
 
-CREATE TABLE IF NOT EXISTS live.invoice_reconciliations (
+CREATE TABLE IF NOT EXISTS liveoltp.invoice_reconciliations (
   reconciliation_id TEXT PRIMARY KEY,
   received_ts       TIMESTAMPTZ NOT NULL,
   po_id             TEXT,
@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS live.invoice_reconciliations (
   agent_notes         TEXT
 );
 
-CREATE TABLE IF NOT EXISTS live.agent_runs (
+CREATE TABLE IF NOT EXISTS liveoltp.agent_runs (
   run_id        TEXT PRIMARY KEY,
   started_ts    TIMESTAMPTZ NOT NULL,
   finished_ts   TIMESTAMPTZ,
@@ -208,4 +208,4 @@ CREATE TABLE IF NOT EXISTS live.agent_runs (
   status        TEXT,
   error_msg     TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_agent_runs_ts ON live.agent_runs (started_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_ts ON liveoltp.agent_runs (started_ts DESC);

@@ -1,0 +1,86 @@
+# Train + register the supplier_scoring_model.
+#
+# Triggers:
+#   * weekly cron (Mondays 02:00 UTC) — fresh model every week
+#   * workflow_dispatch — manual one-shot
+#   * push to ml/** on main — retrain when training code changes
+#
+# What it does:
+#   * pip install sklearn / mlflow / numpy / pandas / databricks-sdk
+#   * run python ml/train_supplier_model.py
+#   * the script logs an MLflow run, registers a new model version under
+#     livezerobus.procurement.supplier_scoring_model, and promotes it to
+#     the @prod alias — picked up automatically by the Lakeflow Gold MV
+#     `gd_supplier_leaderboard` on its next refresh.
+#
+# Required GitHub repo secrets (same as deploy.yml):
+#   DATABRICKS_HOST
+#   DATABRICKS_CLIENT_ID
+#   DATABRICKS_CLIENT_SECRET
+name: train-model
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"   # Monday 02:00 UTC
+  workflow_dispatch:
+    inputs:
+      promote_to_prod:
+        description: "Promote new version to @prod alias"
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths:
+      - "ml/**"
+      - ".github/workflows/train-model.yml"
+
+concurrency:
+  group: train-model
+  cancel-in-progress: false
+
+env:
+  DATABRICKS_HOST:          ${{ secrets.DATABRICKS_HOST }}
+  DATABRICKS_CLIENT_ID:     ${{ secrets.DATABRICKS_CLIENT_ID }}
+  DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+  UC_CATALOG: livezerobus
+  UC_SCHEMA: procurement
+  PROMOTE_TO_PROD: ${{ inputs.promote_to_prod || 'true' }}
+
+jobs:
+  train:
+    name: Train supplier_scoring_model
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install ML deps
+        run: |
+          pip install --upgrade pip
+          pip install \
+            "mlflow>=2.14,<3" \
+            "scikit-learn>=1.3" \
+            "numpy>=1.26" \
+            "pandas>=2.0" \
+            "databricks-sdk>=0.30"
+
+      - name: Train + register model
+        run: python ml/train_supplier_model.py
+
+      - name: Confirm @prod alias
+        if: ${{ env.PROMOTE_TO_PROD == 'true' }}
+        run: |
+          python <<'PY'
+          import os, mlflow
+          mlflow.set_registry_uri("databricks-uc")
+          c = mlflow.tracking.MlflowClient()
+          name = f'{os.environ["UC_CATALOG"]}.{os.environ["UC_SCHEMA"]}.supplier_scoring_model'
+          v = c.get_model_version_by_alias(name, "prod")
+          print(f"@prod is now {name} v{v.version}")
+          PY

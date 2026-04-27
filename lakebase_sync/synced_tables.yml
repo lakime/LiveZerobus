@@ -3,9 +3,17 @@
 #
 # Each entry describes one Delta -> Postgres synced table.
 # scheduling_policy:
-#   CONTINUOUS    → low-latency change-data stream (best for dashboards)
-#   SNAPSHOT      → full refresh every N seconds (cheaper)
+#   CONTINUOUS    → low-latency change-data stream (requires CDC-capable
+#                   source: streaming tables with change-data-feed enabled)
+#   SNAPSHOT      → full refresh every N seconds (works for materialized
+#                   views and batch tables — no CDC needed)
 #   TRIGGERED     → on-demand only
+#
+# All five Gold tables below are Lakeflow MATERIALIZED VIEWS (batch
+# aggregations / joins), so they do NOT expose CDC and CONTINUOUS mode
+# would be rejected. Using SNAPSHOT on a short interval is the correct
+# pattern here — the simulators drive enough churn upstream that a
+# 30-60s snapshot feels near-real-time to the UI.
 #
 # Vertical-Farm Seed Procurement demo — only the Gold-layer tables are
 # Delta-synced. The agent-state tables (email_inbox/outbox, po_drafts,
@@ -16,24 +24,27 @@
 
 instance: ${lakebase_instance}        # e.g. databricks_postgres
 target_branch: ${lakebase_branch}     # e.g. production
-target_schema: live
+target_schema: liveoltp
 
 tables:
 
   - source: ${catalog}.${schema}.gd_inventory_snapshot
     target: inventory_snapshot
     primary_keys: [sku, room_id]
-    scheduling_policy: CONTINUOUS
+    scheduling_policy: SNAPSHOT
+    snapshot_interval_seconds: 30
 
   - source: ${catalog}.${schema}.gd_supplier_leaderboard
     target: supplier_leaderboard
     primary_keys: [sku, supplier_id]
-    scheduling_policy: CONTINUOUS
+    scheduling_policy: SNAPSHOT
+    snapshot_interval_seconds: 30
 
   - source: ${catalog}.${schema}.gd_commodity_latest
     target: commodity_prices_latest
     primary_keys: [input_key]
-    scheduling_policy: CONTINUOUS
+    scheduling_policy: SNAPSHOT
+    snapshot_interval_seconds: 30
 
   - source: ${catalog}.${schema}.gd_demand_1h
     target: demand_1h
@@ -44,4 +55,5 @@ tables:
   - source: ${catalog}.${schema}.gd_procurement_recommendations
     target: procurement_recommendations
     primary_keys: [recommendation_id]
-    scheduling_policy: CONTINUOUS
+    scheduling_policy: SNAPSHOT
+    snapshot_interval_seconds: 30

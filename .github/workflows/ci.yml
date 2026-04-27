@@ -1,0 +1,77 @@
+# Pull-request CI: lint + type-check + frontend build.
+# No Databricks credentials needed — pure local checks.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: ["**"]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend type-check + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Strip stale .js siblings
+        # Defensive: if a contributor's IDE created .js next to .tsx and
+        # committed it, Vite would resolve the .js first. build_frontend.sh
+        # does this too — replicating here so the CI catches it before deploy.
+        run: |
+          find frontend/src -type f -name "*.js" \
+            ! -path "*/node_modules/*" -delete || true
+
+      - name: Type-check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+  backend:
+    name: Backend lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install ruff
+        run: pip install ruff==0.5.7
+
+      - name: Lint backend + simulators + pipelines + ml
+        run: |
+          ruff check \
+            backend/app \
+            simulators \
+            pipelines \
+            ml \
+            scripts \
+            lakebase_sync || true
+          # `|| true` for now — gradually flip to fail-on-error once the
+          # codebase is clean. Remove the `|| true` to enforce.
