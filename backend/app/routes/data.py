@@ -39,7 +39,7 @@ def inventory(
     return query(settings, f"""
         SELECT sku, room_id, on_hand_g, last_event_ts,
                reorder_point_g, target_stock_g
-          FROM live.inventory_snapshot
+          FROM liveoltp.inventory_snapshot
           {w}
          ORDER BY sku, room_id
     """, params)
@@ -63,7 +63,7 @@ def supplier_leaderboard(
         SELECT sku, supplier_id, supplier_name, pack_size_g,
                unit_price_usd, usd_per_gram, lead_time_days, min_qty,
                organic, score, rank, quote_ts
-          FROM live.supplier_leaderboard
+          FROM liveoltp.supplier_leaderboard
           {where}
          ORDER BY sku, rank
     """, params)
@@ -76,7 +76,7 @@ def supplier_leaderboard(
 def commodity_latest(settings: Settings = Depends(get_settings)):
     return query(settings, """
         SELECT input_key, price_usd, unit, event_ts, pct_1h, pct_24h
-          FROM live.commodity_prices_latest
+          FROM liveoltp.commodity_prices_latest
          ORDER BY input_key
     """)
 
@@ -97,7 +97,7 @@ def demand_hourly(
         params.append(sku)
     return query(settings, f"""
         SELECT sku, hour_ts, trays, grams_req
-          FROM live.demand_1h
+          FROM liveoltp.demand_1h
           {where}
          ORDER BY hour_ts ASC
     """, params)
@@ -120,7 +120,7 @@ def recommendations(
     params.append(limit)
     return query(settings, f"""
         SELECT *
-          FROM live.procurement_recommendations
+          FROM liveoltp.procurement_recommendations
           {where}
          ORDER BY created_ts DESC
          LIMIT %s
@@ -134,18 +134,18 @@ def recommendations(
 def summary(settings: Settings = Depends(get_settings)):
     row = query(settings, """
         SELECT
-          (SELECT COUNT(*) FROM live.inventory_snapshot
+          (SELECT COUNT(*) FROM liveoltp.inventory_snapshot
              WHERE on_hand_g <= reorder_point_g)                    AS skus_below_reorder,
-          (SELECT COUNT(*) FROM live.procurement_recommendations
+          (SELECT COUNT(*) FROM liveoltp.procurement_recommendations
              WHERE decision = 'BUY_NOW'
                AND created_ts > NOW() - INTERVAL '5 minutes')        AS buy_now_last_5m,
           (SELECT COALESCE(SUM(total_cost_usd), 0)
-             FROM live.procurement_recommendations
+             FROM liveoltp.procurement_recommendations
              WHERE created_ts > NOW() - INTERVAL '1 hour')          AS spend_pending_1h_usd,
-          (SELECT MAX(event_ts) FROM live.commodity_prices_latest)   AS last_market_tick,
-          (SELECT COUNT(*) FROM live.po_drafts
+          (SELECT MAX(event_ts) FROM liveoltp.commodity_prices_latest)   AS last_market_tick,
+          (SELECT COUNT(*) FROM liveoltp.po_drafts
              WHERE status='DRAFT')                                   AS po_drafts_open,
-          (SELECT COUNT(*) FROM live.email_inbox
+          (SELECT COUNT(*) FROM liveoltp.email_inbox
              WHERE processed IS NOT TRUE)                            AS inbound_unprocessed
     """)
     return row[0] if row else {}

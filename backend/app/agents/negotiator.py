@@ -2,7 +2,7 @@
 
 Given a BUY_NOW procurement recommendation, drafts an email to the recommended
 supplier asking for a firm quote (or a better price than the leaderboard
-shows). When a supplier reply lands in `live.email_inbox`, the agent
+shows). When a supplier reply lands in `liveoltp.email_inbox`, the agent
 extracts structured terms from the body, decides whether to accept,
 counter, or escalate, and writes a follow-up email.
 
@@ -72,7 +72,7 @@ def _record_run(
     p, o = llm_usage or (0, 0)
     db.execute(
         settings,
-        """INSERT INTO live.agent_runs
+        """INSERT INTO liveoltp.agent_runs
              (run_id, started_ts, finished_ts, agent_name, input_ref,
               output_ref, prompt_tokens, output_tokens, status, error_msg)
            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
@@ -92,10 +92,10 @@ def _open_rec_needing_rfq(settings: Settings) -> dict | None:
                   r.pack_size_g, r.unit_price_usd, r.total_cost_usd,
                   r.expected_lead_days, r.recommended_supplier_id,
                   r.recommended_supplier_name
-             FROM live.procurement_recommendations r
+             FROM liveoltp.procurement_recommendations r
             WHERE r.decision = 'BUY_NOW'
               AND NOT EXISTS (
-                SELECT 1 FROM live.email_outbox o
+                SELECT 1 FROM liveoltp.email_outbox o
                  WHERE o.sku = r.sku
                    AND o.supplier_id = r.recommended_supplier_id
                    AND o.intent = 'RFQ'
@@ -108,12 +108,12 @@ def _open_rec_needing_rfq(settings: Settings) -> dict | None:
 
 def _supplier_email(settings: Settings, supplier_id: str) -> str:
     # dim_supplier lives in Unity Catalog (not synced to Lakebase by default).
-    # We keep a small lookup synced into live.supplier_leaderboard rows via
+    # We keep a small lookup synced into liveoltp.supplier_leaderboard rows via
     # supplier_name; for the demo the LLM writes to a fake mailbox, so we
     # derive an email from the supplier_id if nothing is synced.
     row = db.fetchone(
         settings,
-        "SELECT supplier_name FROM live.supplier_leaderboard WHERE supplier_id = %s LIMIT 1",
+        "SELECT supplier_name FROM liveoltp.supplier_leaderboard WHERE supplier_id = %s LIMIT 1",
         [supplier_id],
     )
     name = (row or {}).get("supplier_name") or supplier_id
@@ -146,7 +146,7 @@ def _draft_rfq(
     email_id = _new_id("EM")
     db.execute(
         settings,
-        """INSERT INTO live.email_outbox
+        """INSERT INTO liveoltp.email_outbox
              (email_id, thread_id, created_ts, supplier_id, supplier_email,
               subject, body_md, sku, intent, sent_by, status)
            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'RFQ','negotiator','SENT')""",
@@ -169,7 +169,7 @@ def _draft_rfq(
 def _unprocessed_inbound(settings: Settings) -> list[dict]:
     return db.fetchall(
         settings,
-        """SELECT * FROM live.email_inbox
+        """SELECT * FROM liveoltp.email_inbox
             WHERE processed IS NOT TRUE
             ORDER BY received_ts ASC
             LIMIT 20""",
@@ -199,7 +199,7 @@ def _process_inbound(
                     "ERROR", started, error=str(e))
         db.execute(
             settings,
-            "UPDATE live.email_inbox SET processed=TRUE WHERE email_id=%s",
+            "UPDATE liveoltp.email_inbox SET processed=TRUE WHERE email_id=%s",
             [email["email_id"]],
         )
         return
@@ -207,7 +207,7 @@ def _process_inbound(
     intent = str(data.get("intent_detected") or "QUOTE").upper()
     db.execute(
         settings,
-        """UPDATE live.email_inbox
+        """UPDATE liveoltp.email_inbox
              SET intent_detected=%s, extracted_json=%s, processed=TRUE
            WHERE email_id=%s""",
         [intent, json.dumps(data), email["email_id"]],
@@ -252,7 +252,7 @@ def simulate_supplier_reply(
     started = _now()
     thread = db.fetchone(
         settings,
-        """SELECT * FROM live.email_outbox
+        """SELECT * FROM liveoltp.email_outbox
             WHERE thread_id=%s ORDER BY created_ts DESC LIMIT 1""",
         [thread_id],
     )
@@ -261,7 +261,7 @@ def simulate_supplier_reply(
     llm = FoundationModelClient()
     supplier_row = db.fetchone(
         settings,
-        "SELECT supplier_name FROM live.supplier_leaderboard "
+        "SELECT supplier_name FROM liveoltp.supplier_leaderboard "
         "WHERE supplier_id=%s LIMIT 1",
         [thread["supplier_id"]],
     )
@@ -280,7 +280,7 @@ def simulate_supplier_reply(
     email_id = _new_id("IN")
     db.execute(
         settings,
-        """INSERT INTO live.email_inbox
+        """INSERT INTO liveoltp.email_inbox
              (email_id, thread_id, received_ts, supplier_id, supplier_email,
               subject, body_md, sku, intent_detected, extracted_json, processed)
            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,NULL,NULL,FALSE)""",

@@ -1,0 +1,11 @@
+bundle:
+  name: claude-databricks-small-cicd
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    workspace:
+      host: ${env.DATABRICKS_HOST}

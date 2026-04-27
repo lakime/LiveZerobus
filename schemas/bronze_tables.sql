@@ -3,9 +3,10 @@
 -- Run from scripts/setup_unity_catalog.py (or the SQL editor).
 --
 -- NOTE: Zerobus-ingested tables must satisfy:
---   * APPEND_ONLY = true
---   * delta.feature.allowColumnDefaults + delta.columnMapping.mode = 'name'
+--   * delta.appendOnly = true
 --   * a monotonically increasing event-time column (event_ts)
+-- Zerobus REJECTS tables that have `delta.columnMapping.mode` set or the
+-- `allowColumnDefaults` table feature enabled. Do not add those here.
 --
 -- This file is the parameterized variant of schemas/setup.sql and is used by
 -- scripts/setup_unity_catalog.py. The vertical-farm Seed Procurement demo
@@ -34,9 +35,7 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.bz_inventory_events (
 )
 USING DELTA
 TBLPROPERTIES (
-  'delta.appendOnly' = 'true',
-  'delta.columnMapping.mode' = 'name',
-  'delta.feature.allowColumnDefaults' = 'supported'
+  'delta.appendOnly' = 'true'
 );
 
 -- --------------------------------------------------------------------
@@ -57,9 +56,7 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.bz_supplier_quotes (
 )
 USING DELTA
 TBLPROPERTIES (
-  'delta.appendOnly' = 'true',
-  'delta.columnMapping.mode' = 'name',
-  'delta.feature.allowColumnDefaults' = 'supported'
+  'delta.appendOnly' = 'true'
 );
 
 -- --------------------------------------------------------------------
@@ -76,9 +73,7 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.bz_demand_events (
 )
 USING DELTA
 TBLPROPERTIES (
-  'delta.appendOnly' = 'true',
-  'delta.columnMapping.mode' = 'name',
-  'delta.feature.allowColumnDefaults' = 'supported'
+  'delta.appendOnly' = 'true'
 );
 
 -- --------------------------------------------------------------------
@@ -95,9 +90,7 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.bz_commodity_prices (
 )
 USING DELTA
 TBLPROPERTIES (
-  'delta.appendOnly' = 'true',
-  'delta.columnMapping.mode' = 'name',
-  'delta.feature.allowColumnDefaults' = 'supported'
+  'delta.appendOnly' = 'true'
 );
 
 -- --------------------------------------------------------------------

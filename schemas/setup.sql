@@ -8,7 +8,7 @@
 --   1. Creates catalog `livezerobus` (if missing) and schema
 --      `livezerobus.procurement`.
 --   2. Creates the four Bronze tables that Zerobus writes into
---      (append-only + columnMapping=name are the two Zerobus requirements).
+--      (append-only is the only Zerobus-specific requirement).
 --   3. Creates + seeds `dim_sku` (seed varieties) and `dim_supplier`
 --      (seed houses) with realistic vertical-farm data.
 --   4. Creates the agent-state Delta tables that the app + agents read
@@ -39,7 +39,8 @@ USE SCHEMA  procurement;
 --
 -- Required Delta properties for Zerobus:
 --   * delta.appendOnly = true          (Zerobus only appends)
---   * delta.columnMapping.mode = name  (enables schema evolution by name)
+-- Zerobus REJECTS tables that have `delta.columnMapping.mode` set or the
+-- `allowColumnDefaults` table feature enabled — do not add those.
 -- A monotonically increasing event-time column (event_ts) is expected by
 -- downstream pipelines.
 -- ---------------------------------------------------------------------------
@@ -58,9 +59,7 @@ CREATE TABLE IF NOT EXISTS bz_inventory_events (
 )
 USING DELTA
 TBLPROPERTIES (
-  'delta.appendOnly' = 'true',
-  'delta.columnMapping.mode' = 'name',
-  'delta.feature.allowColumnDefaults' = 'supported'
+  'delta.appendOnly' = 'true'
 );
 
 -- Rolling supplier quotes. `pack_size_g` + `unit_price_usd` lets us compare
@@ -80,9 +79,7 @@ CREATE TABLE IF NOT EXISTS bz_supplier_quotes (
 )
 USING DELTA
 TBLPROPERTIES (
-  'delta.appendOnly' = 'true',
-  'delta.columnMapping.mode' = 'name',
-  'delta.feature.allowColumnDefaults' = 'supported'
+  'delta.appendOnly' = 'true'
 );
 
 -- Planting schedule = demand. One event per scheduled tray/flat seeding.
@@ -97,9 +94,7 @@ CREATE TABLE IF NOT EXISTS bz_demand_events (
 )
 USING DELTA
 TBLPROPERTIES (
-  'delta.appendOnly' = 'true',
-  'delta.columnMapping.mode' = 'name',
-  'delta.feature.allowColumnDefaults' = 'supported'
+  'delta.appendOnly' = 'true'
 );
 
 -- Input/commodity price feed — substrate, nutrients, power. Drives
@@ -115,9 +110,7 @@ CREATE TABLE IF NOT EXISTS bz_commodity_prices (
 )
 USING DELTA
 TBLPROPERTIES (
-  'delta.appendOnly' = 'true',
-  'delta.columnMapping.mode' = 'name',
-  'delta.feature.allowColumnDefaults' = 'supported'
+  'delta.appendOnly' = 'true'
 );
 
 

@@ -1,0 +1,124 @@
+# Continuous deployment to Databricks.
+# Triggers:
+#   * push to main         — full deploy of pipelines + Apps backend
+#   * workflow_dispatch    — manual one-click deploy from any branch
+#
+# What it does, in order:
+#   1. Build the React SPA into backend/static/
+#   2. Sync pipelines/ to /Workspace/Users/<user>/livezerobus/pipelines
+#   3. Sync backend/    to /Workspace/Users/<user>/livezerobus
+#   4. databricks apps deploy livezerobus
+#   5. (optional, manual only) Trigger the Lakeflow pipeline
+#
+# Required GitHub repo secrets:
+#   DATABRICKS_HOST            https://<workspace>.azuredatabricks.net
+#   DATABRICKS_CLIENT_ID       service principal application id (UUID)
+#   DATABRICKS_CLIENT_SECRET   OAuth secret minted via
+#                                `databricks service-principals create-secret`
+#
+# Required GitHub repo variables (or override here):
+#   DATABRICKS_WORKSPACE_PATH  e.g. /Workspace/Users/cicd-sp@example.com/livezerobus
+#                              (auto-derived from `current-user me` if unset)
+#   DATABRICKS_PIPELINE_ID     optional — used for the manual pipeline-run step
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "pipelines/**"
+      - "scripts/build_frontend.sh"
+      - "scripts/deploy_app.sh"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      run_pipeline_after_deploy:
+        description: "Trigger the Lakeflow pipeline after deploying"
+        type: boolean
+        default: false
+
+concurrency:
+  # Never run two deploys against the same workspace at once.
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_NAME: livezerobus
+  DATABRICKS_HOST:          ${{ secrets.DATABRICKS_HOST }}
+  DATABRICKS_CLIENT_ID:     ${{ secrets.DATABRICKS_CLIENT_ID }}
+  DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+
+jobs:
+  deploy:
+    name: Build + deploy livezerobus
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Sanity-check auth
+        run: |
+          databricks current-user me
+          echo "Auth OK."
+
+      - name: Resolve workspace path
+        id: ws
+        run: |
+          if [[ -n "${{ vars.DATABRICKS_WORKSPACE_PATH }}" ]]; then
+            WS="${{ vars.DATABRICKS_WORKSPACE_PATH }}"
+          else
+            WS_USER="$(databricks current-user me --output json | python3 -c 'import json,sys;print(json.load(sys.stdin)["userName"])')"
+            WS="/Workspace/Users/${WS_USER}/${APP_NAME}"
+          fi
+          echo "Workspace path: ${WS}"
+          echo "path=${WS}" >> "$GITHUB_OUTPUT"
+
+      - name: Build frontend
+        run: ./scripts/build_frontend.sh
+
+      - name: Sync pipelines/ → workspace
+        run: |
+          databricks sync --full \
+            ./pipelines \
+            "${{ steps.ws.outputs.path }}/pipelines"
+
+      - name: Sync backend/ → workspace
+        run: |
+          databricks sync --full \
+            ./backend \
+            "${{ steps.ws.outputs.path }}"
+
+      - name: Deploy Databricks App
+        run: |
+          databricks apps deploy "${APP_NAME}" \
+            --source-code-path "${{ steps.ws.outputs.path }}"
+
+      - name: Tail app logs
+        # Fire-and-forget log tail so the action surface shows the freshest
+        # boot output. Times out fast — not a blocker for the deploy step.
+        run: |
+          timeout 25s databricks apps logs "${APP_NAME}" || true
+
+      - name: Trigger Lakeflow pipeline (manual dispatch only)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_pipeline_after_deploy }}
+        env:
+          PIPELINE_ID: ${{ vars.DATABRICKS_PIPELINE_ID }}
+        run: |
+          if [[ -z "${PIPELINE_ID}" ]]; then
+            echo "DATABRICKS_PIPELINE_ID variable not set — skipping pipeline trigger."
+            exit 0
+          fi
+          databricks pipelines start-update "${PIPELINE_ID}" \
+            --full-refresh-all=false

@@ -220,4 +220,15 @@ export const api = {
     postJSON<{ email_id?: string; intent?: string; error?: string }>(
       `/api/agents/negotiator/simulate-reply?thread_id=${encodeURIComponent(threadId)}`,
     ),
+  simulateInvoice: (poId?: string) =>
+    postJSON<{
+      reconciliation_id?: string;
+      po_id?: string;
+      invoiced_amount_usd?: number;
+      expected_amount_usd?: number;
+      simulated_variance_pct?: number;
+      error?: string;
+    }>(
+      `/api/agents/invoices/simulate${poId ? `?po_id=${encodeURIComponent(poId)}` : ""}`,
+    ),
 };

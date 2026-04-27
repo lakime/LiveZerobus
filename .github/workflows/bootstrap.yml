@@ -1,0 +1,87 @@
+# One-shot bootstrap of Unity Catalog state — catalog, schema, Bronze
+# tables (with delta.appendOnly + columnMapping), and the dim_sku /
+# dim_supplier seed data.
+#
+# Idempotent: re-running won't break anything, just no-ops on objects
+# that already exist.
+#
+# Manual only — you don't want this firing on every PR.
+#
+# Required GitHub repo secrets:
+#   DATABRICKS_HOST
+#   DATABRICKS_CLIENT_ID
+#   DATABRICKS_CLIENT_SECRET
+#
+# Required GitHub repo variables (or override at dispatch time):
+#   DATABRICKS_WAREHOUSE_ID    SQL Warehouse to run DDL against
+#   UC_CATALOG                 default: livezerobus
+#   UC_SCHEMA                  default: procurement
+name: bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      catalog:
+        description: "Unity Catalog catalog name"
+        type: string
+        default: livezerobus
+      schema:
+        description: "Unity Catalog schema name"
+        type: string
+        default: procurement
+      warehouse_id:
+        description: "Override DATABRICKS_WAREHOUSE_ID (leave empty to use repo variable)"
+        type: string
+        default: ""
+
+env:
+  DATABRICKS_HOST:          ${{ secrets.DATABRICKS_HOST }}
+  DATABRICKS_CLIENT_ID:     ${{ secrets.DATABRICKS_CLIENT_ID }}
+  DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+  UC_CATALOG:               ${{ inputs.catalog }}
+  UC_SCHEMA:                ${{ inputs.schema }}
+  WAREHOUSE_ID:             ${{ inputs.warehouse_id != '' && inputs.warehouse_id || vars.DATABRICKS_WAREHOUSE_ID }}
+
+jobs:
+  bootstrap:
+    name: Bootstrap UC catalog + Bronze + dimensions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install SDK
+        run: |
+          pip install --upgrade pip
+          pip install "databricks-sdk>=0.30"
+
+      - name: Sanity-check warehouse id
+        run: |
+          if [[ -z "${WAREHOUSE_ID}" ]]; then
+            echo "::error::WAREHOUSE_ID is empty — set repo variable DATABRICKS_WAREHOUSE_ID or pass it via workflow_dispatch input."
+            exit 1
+          fi
+          echo "Will run DDL against warehouse_id=${WAREHOUSE_ID}"
+
+      - name: Run setup_unity_catalog.py
+        run: python scripts/setup_unity_catalog.py
+
+      # Optional: also display a summary of what now exists
+      - name: List tables in target schema
+        run: |
+          python <<'PY'
+          import os
+          from databricks.sdk import WorkspaceClient
+          w = WorkspaceClient()
+          cat, sch = os.environ["UC_CATALOG"], os.environ["UC_SCHEMA"]
+          tables = list(w.tables.list(catalog_name=cat, schema_name=sch))
+          print(f"{len(tables)} table(s) in {cat}.{sch}:")
+          for t in tables:
+              print(f"  - {t.name:<40}  {t.table_type.value if t.table_type else ''}")
+          PY

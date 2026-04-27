@@ -1,6 +1,6 @@
 """Supplier onboarding agent.
 
-Processes new supplier applications in `live.supplier_applications`:
+Processes new supplier applications in `liveoltp.supplier_applications`:
   * Asks the LLM to score the applicant 0..1 against a rubric.
   * Marks APPROVED (score >= 0.75), SCREENING (0.5-0.75), or REJECTED (<0.5).
   * Writes a friendly notes summary.
@@ -45,7 +45,7 @@ def run_onboarding(settings: Settings) -> dict:
     llm = FoundationModelClient()
     apps = db.fetchall(
         settings,
-        """SELECT * FROM live.supplier_applications
+        """SELECT * FROM liveoltp.supplier_applications
             WHERE status IN ('NEW','SCREENING')
             ORDER BY submitted_ts ASC
             LIMIT 25""",
@@ -66,7 +66,7 @@ def run_onboarding(settings: Settings) -> dict:
         except LLMError as e:
             db.execute(
                 settings,
-                "UPDATE live.supplier_applications SET agent_notes=%s WHERE application_id=%s",
+                "UPDATE liveoltp.supplier_applications SET agent_notes=%s WHERE application_id=%s",
                 [f"LLM error: {e}", a["application_id"]],
             )
             continue
@@ -76,14 +76,14 @@ def run_onboarding(settings: Settings) -> dict:
         notes = str(data.get("notes", ""))[:180]
         db.execute(
             settings,
-            """UPDATE live.supplier_applications
+            """UPDATE liveoltp.supplier_applications
                   SET status=%s, score=%s, agent_notes=%s
                 WHERE application_id=%s""",
             [verdict, score, notes, a["application_id"]],
         )
         db.execute(
             settings,
-            """INSERT INTO live.agent_runs
+            """INSERT INTO liveoltp.agent_runs
                  (run_id, started_ts, finished_ts, agent_name, input_ref,
                   output_ref, prompt_tokens, output_tokens, status, error_msg)
                VALUES (%s,%s,%s,'supplier_onboarding',%s,%s,%s,%s,'OK',NULL)""",

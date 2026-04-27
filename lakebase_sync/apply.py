@@ -8,9 +8,9 @@ then creates/updates a Lakebase Synced Table per entry in synced_tables.yml.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import pathlib
-import re
 import sys
 
 import yaml
@@ -27,29 +27,33 @@ def _render(text: str, params: dict[str, str]) -> str:
 def _apply_postgres_schema(w: WorkspaceClient, instance: str, branch: str) -> None:
     """Apply lakebase_schema.sql against the Lakebase database.
 
-    The SDK exposes statement execution against Lakebase via the
-    DatabaseAPI / query endpoint. If your SDK version doesn't expose it,
-    run the file manually in the Databricks SQL editor against the
-    `databricks_postgres` connection.
+    The current databricks-sdk doesn't expose a generic "run arbitrary SQL
+    against Lakebase" helper on DatabaseAPI, so this script expects you to
+    have already applied schemas/lakebase_schema.sql manually via the
+    Lakebase SQL editor (see README.md step 5a). We just sanity-check the
+    file exists and move on.
     """
     sql_file = pathlib.Path(__file__).resolve().parents[1] / "schemas" / "lakebase_schema.sql"
-    sql = sql_file.read_text()
-    statements = [s.strip() for s in re.split(r";\s*\n", sql) if s.strip()]
-
-    for stmt in statements:
-        print(f"  [postgres] {stmt.splitlines()[0][:100]}…")
-        w.database.execute_database_query(
-            instance_name=instance,
-            branch=branch,
-            query=stmt,
-        )
+    if not sql_file.exists():
+        raise FileNotFoundError(sql_file)
+    print(
+        "  [postgres] Skipping Postgres DDL — apply schemas/lakebase_schema.sql "
+        "manually via the Lakebase SQL editor before running this script."
+    )
 
 
 def main() -> int:
-    catalog = os.environ.get("UC_CATALOG", "livezerobus")
-    schema = os.environ.get("UC_SCHEMA", "procurement")
-    instance = os.environ.get("LAKEBASE_INSTANCE", "databricks_postgres")
-    branch = os.environ.get("LAKEBASE_BRANCH", "production")
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--catalog",           default=os.environ.get("UC_CATALOG", "livezerobus"))
+    parser.add_argument("--schema",            default=os.environ.get("UC_SCHEMA", "procurement"))
+    parser.add_argument("--lakebase-instance", default=os.environ.get("LAKEBASE_INSTANCE", "databricks_postgres"))
+    parser.add_argument("--lakebase-branch",   default=os.environ.get("LAKEBASE_BRANCH", "production"))
+    args = parser.parse_args()
+
+    catalog  = args.catalog
+    schema   = args.schema
+    instance = args.lakebase_instance
+    branch   = args.lakebase_branch
 
     cfg_path = pathlib.Path(__file__).with_name("synced_tables.yml")
     cfg = yaml.safe_load(_render(cfg_path.read_text(), {
@@ -78,21 +82,23 @@ def main() -> int:
         synced_name = f"{cfg['target_schema']}.{target}"
         print(f"  [sync] {source}  →  {instance}/{branch}/{synced_name} [{scheduling}]")
 
+        synced_table = db.SyncedDatabaseTable(
+            name=synced_name,
+            database_instance_name=cfg["instance"],
+            logical_database_name=cfg["target_branch"],
+            spec=spec,
+        )
+
         try:
-            w.database.create_synced_database_table(
-                name=synced_name,
-                database_instance_name=cfg["instance"],
-                logical_database_name=cfg["target_branch"],
-                spec=spec,
-            )
+            w.database.create_synced_database_table(synced_table=synced_table)
         except Exception as e:
+            msg = str(e).lower()
             # Fall back to update if already exists
-            if "already exists" in str(e).lower():
+            if "already exists" in msg or "alreadyexists" in msg:
                 w.database.update_synced_database_table(
                     name=synced_name,
-                    database_instance_name=cfg["instance"],
-                    logical_database_name=cfg["target_branch"],
-                    spec=spec,
+                    synced_table=synced_table,
+                    update_mask="spec",
                 )
             else:
                 raise

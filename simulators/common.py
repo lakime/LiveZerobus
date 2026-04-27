@@ -1,17 +1,18 @@
 """Shared helpers for Zerobus producers.
 
-The Zerobus Python SDK wraps a gRPC stream. Each producer is bound to a
-UC-qualified table and sends protobuf rows whose schema matches the table's
-columns. For demo readability we define the row shapes here as dataclasses
-and serialize to dicts; the SDK compiles a protobuf descriptor on the fly.
+Uses the official Databricks Zerobus Ingest SDK for Python
+(`databricks-zerobus-ingest-sdk`). Each producer opens a gRPC stream bound
+to a UC-qualified Bronze Delta table and pushes rows via the SDK. For demo
+readability we use JSON record mode — no protobuf descriptor compilation
+required; the SDK serialises dicts to the wire.
 
 This module is the shared vocabulary for the vertical-farm seed-procurement
 demo. See schemas/setup.sql for the matching Delta tables.
 
-If you prefer pre-compiled .proto files, run:
-    databricks zerobus compile-schema \\
-        --catalog livezerobus --schema procurement --table bz_inventory_events \\
-        --out zerobus/generated
+If you later want higher throughput, switch to PROTO mode:
+  1. Generate the descriptor via `python -m zerobus.tools.generate_proto ...`
+  2. Pass `TableProperties(fqn, record_pb2.Event.DESCRIPTOR)` and leave
+     `StreamConfigurationOptions()` on its default (RecordType.PROTO).
 """
 from __future__ import annotations
 
@@ -26,11 +27,17 @@ from datetime import datetime, timezone
 from typing import Any, Iterator
 
 try:
-    # Databricks Zerobus Python SDK (pip install databricks-zerobus-sdk)
-    from databricks.zerobus import ZerobusClient  # type: ignore
+    # pip install databricks-zerobus-ingest-sdk
+    from zerobus.sdk.sync import ZerobusSdk  # type: ignore
+    from zerobus.sdk.shared import (  # type: ignore
+        RecordType,
+        StreamConfigurationOptions,
+        TableProperties,
+    )
 except ImportError as e:  # pragma: no cover - informational only
     raise SystemExit(
-        "databricks-zerobus-sdk is required. `pip install -r requirements.txt`"
+        "databricks-zerobus-ingest-sdk is required. "
+        "`pip install -r requirements.txt`"
     ) from e
 
 
@@ -68,27 +75,44 @@ def rand_suffix(n: int = 4) -> str:
 def zerobus_stream(table_fqn: str) -> Iterator["ZerobusStream"]:
     """Context manager that opens a Zerobus gRPC stream for `catalog.schema.table`.
 
-    Uses DATABRICKS_HOST + DATABRICKS_CLIENT_ID/SECRET for OAuth.
-    Endpoint is taken from ZEROBUS_ENDPOINT (e.g. `region.zerobus...:443`).
+    Env contract:
+        DATABRICKS_HOST         — workspace URL (https://…azuredatabricks.net)
+        DATABRICKS_CLIENT_ID    — service-principal Application ID
+        DATABRICKS_CLIENT_SECRET— SP OAuth secret
+        ZEROBUS_ENDPOINT        — full URL, e.g.
+                                   https://<workspace-id>.zerobus.<region>.azuredatabricks.net
+                                   (include the https:// scheme, per the
+                                   Azure Databricks Zerobus Ingest docs)
     """
-    endpoint = env("ZEROBUS_ENDPOINT")
-    client = ZerobusClient(
-        endpoint=endpoint,
-        host=env("DATABRICKS_HOST"),
-        client_id=env("DATABRICKS_CLIENT_ID"),
-        client_secret=env("DATABRICKS_CLIENT_SECRET"),
+    server_endpoint = env("ZEROBUS_ENDPOINT")
+    workspace_url = env("DATABRICKS_HOST")
+
+    sdk = ZerobusSdk(server_endpoint, workspace_url)
+    table_properties = TableProperties(table_fqn)
+    options = StreamConfigurationOptions(record_type=RecordType.JSON)
+
+    stream = sdk.create_stream(
+        env("DATABRICKS_CLIENT_ID"),
+        env("DATABRICKS_CLIENT_SECRET"),
+        table_properties,
+        options,
     )
-    stream = client.open_stream(table_fqn)
     try:
         yield ZerobusStream(stream, table_fqn)
     finally:
         try:
+            stream.flush()
+        except Exception:  # pragma: no cover - best-effort
+            pass
+        try:
             stream.close()
-        except Exception:  # pragma: no cover - best-effort close
+        except Exception:  # pragma: no cover - best-effort
             pass
 
 
 class ZerobusStream:
+    """Thin wrapper over the SDK stream that adds rate logging."""
+
     def __init__(self, stream: Any, table_fqn: str) -> None:
         self._stream = stream
         self._table = table_fqn
@@ -96,7 +120,9 @@ class ZerobusStream:
         self._t0 = time.time()
 
     def send(self, row: dict[str, Any]) -> None:
-        self._stream.ingest(row)
+        # JSON mode: fire-and-forget is fine for the demo volume (~20/s).
+        # Switch to `ingest_record_offset` if you want per-row durable acks.
+        self._stream.ingest_record_nowait(row)
         self._sent += 1
         if self._sent % 500 == 0:
             rate = self._sent / max(time.time() - self._t0, 1e-6)
@@ -159,10 +185,20 @@ class CommodityPrice:
 
 
 def as_row(obj: Any) -> dict[str, Any]:
+    """Dataclass → JSON-safe dict for Zerobus RecordType.JSON.
+
+    Delta TIMESTAMP columns expect integer microseconds since Unix epoch
+    when ingested via Zerobus JSON mode — ISO-8601 strings are rejected
+    with "invalid digit found in string" (server tries to parse the
+    string as i64).
+    """
     d = dataclasses.asdict(obj)
     for k, v in d.items():
         if isinstance(v, datetime):
-            d[k] = v
+            # Ensure tz-aware, then → microseconds since epoch (UTC).
+            if v.tzinfo is None:
+                v = v.replace(tzinfo=timezone.utc)
+            d[k] = int(v.timestamp() * 1_000_000)
     return d
 
 

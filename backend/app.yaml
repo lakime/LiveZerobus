@@ -28,13 +28,29 @@ command:
 
 env:
   - name: PGHOST
-    value: CHANGE_ME.database.cloud.databricks.com
+    value: ep-frosty-flower-e2o5hjfp.database.westeurope.azuredatabricks.net
   - name: PGPORT
     value: "5432"
   - name: PGDATABASE
     value: databricks_postgres
   - name: PGUSER
-    value: CHANGE_ME-service-principal-uuid
+    value: c4352007-a55b-4da5-b5c9-f4c8df89e58a
+  - name: PG_SCHEMA
+    value: liveoltp
+  # Lakebase Autoscaling (Projects) resource parts. The app mints a
+  # short-lived Postgres OAuth token via
+  #   w.postgres.generate_database_credential(
+  #       name="projects/{LAKEBASE_PROJECT}/branches/{LAKEBASE_BRANCH}"
+  #            "/endpoints/{LAKEBASE_ENDPOINT}"
+  #   )
+  # Values come from `databricks postgres list-projects`,
+  # `list-branches projects/<p>`, `list-endpoints projects/<p>/branches/<b>`.
+  - name: LAKEBASE_PROJECT
+    value: myzerobus
+  - name: LAKEBASE_BRANCH
+    value: production
+  - name: LAKEBASE_ENDPOINT
+    value: primary
   - name: FRONTEND_DIST
     value: static
   - name: FM_MODEL

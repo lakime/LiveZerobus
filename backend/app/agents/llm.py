@@ -74,9 +74,23 @@ class FoundationModelClient:
         temperature: float | None = None,
         timeout_s: float = 30.0,
     ):
-        self.host = (host or os.environ.get("DATABRICKS_HOST", "")).rstrip("/")
-        if not self.host:
-            raise LLMError("DATABRICKS_HOST not set")
+        # Resolve workspace host robustly:
+        #   1. explicit `host` arg wins
+        #   2. then DATABRICKS_HOST env (may be bare hostname inside Apps)
+        #   3. fall back to the SDK config (always normalized to https://...)
+        raw_host = (host or os.environ.get("DATABRICKS_HOST", "")).strip()
+        if not raw_host:
+            try:
+                raw_host = (WorkspaceClient().config.host or "").strip()
+            except Exception as e:                          # pragma: no cover
+                raise LLMError(f"Could not determine workspace host: {e}") from e
+        if not raw_host:
+            raise LLMError("DATABRICKS_HOST not set and SDK could not resolve it")
+        # Apps may inject a scheme-less host (e.g. "<ws>.azuredatabricks.net").
+        # httpx requires the scheme to be explicit, so prepend https:// if missing.
+        if not raw_host.startswith(("http://", "https://")):
+            raw_host = f"https://{raw_host}"
+        self.host = raw_host.rstrip("/")
         self.model = model or os.environ.get(
             "LLM_MODEL", "databricks-meta-llama-3-3-70b-instruct"
         )
@@ -127,16 +141,36 @@ class FoundationModelClient:
     ) -> tuple[dict[str, Any], LLMResponse]:
         """Same as `chat` but expects the model to return a single JSON object.
 
-        The system prompt should already instruct JSON-only output; we just
-        attempt to salvage a JSON block from the first {...} we find.
+        The system prompt should already instruct JSON-only output, but in
+        practice the model often:
+          * wraps the response in ```json ... ``` markdown fences
+          * embeds literal newlines / tabs inside string values
+            (technically invalid JSON, but harmless)
+        We strip the fences and parse with `strict=False` to tolerate both.
         """
         resp = self.chat(system, user, max_tokens=max_tokens)
-        txt = resp.text
+        txt = resp.text.strip()
+
+        # Strip a leading ```json / ``` fence and a trailing ``` fence, if present.
+        if txt.startswith("```"):
+            # remove leading fence (```json or just ```), then any trailing fence
+            first_nl = txt.find("\n")
+            if first_nl != -1:
+                txt = txt[first_nl + 1:]
+            if txt.endswith("```"):
+                txt = txt[:-3]
+            txt = txt.strip()
+
         start = txt.find("{")
         end = txt.rfind("}")
         if start < 0 or end < 0 or end < start:
             raise LLMError(f"Expected JSON in model output; got: {txt[:200]}")
+        candidate = txt[start:end + 1]
         try:
-            return json.loads(txt[start:end + 1]), resp
+            # strict=False allows literal control chars (\n, \t) inside strings,
+            # which Llama frequently produces in body_md fields.
+            return json.loads(candidate, strict=False), resp
         except json.JSONDecodeError as e:
-            raise LLMError(f"Invalid JSON from model: {e}; text={txt[:200]}") from e
+            raise LLMError(
+                f"Invalid JSON from model: {e}; text={candidate[:200]}"
+            ) from e

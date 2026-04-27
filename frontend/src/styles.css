@@ -75,6 +75,18 @@ td { padding: 6px 8px; border-bottom: 1px dashed #1d2544; vertical-align: top; }
 tr:last-child td { border-bottom: none; }
 .truncate { max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* Keep short fixed-format cells on a single line — timestamps render as
+   "11:18:34 AM" and ids as "PO-B7CB66F01D"; without nowrap the browser
+   breaks on the space (AM/PM) or hyphen, producing ugly multi-line cells
+   in narrow tables. The `.truncate` cells already declare nowrap, so this
+   is consistent and safe. */
+td.muted.small,
+td.pos,
+td.neg,
+td.nowrap {
+  white-space: nowrap;
+}
+
 .badge {
   display: inline-block; padding: 2px 8px; border-radius: 10px;
   font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
@@ -143,6 +155,26 @@ tr:last-child td { border-bottom: none; }
   font-size: 13px;
 }
 .onboarding-form label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.onboarding-form select {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
+  font-size: 13px;
+}
+
+/* Multi-select crop-type chips */
+.sku-multi { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sku-multi .chip {
+  display: inline-flex; align-items: center; padding: 4px 10px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--panel-2); color: var(--muted);
+  font-size: 12px; cursor: pointer; user-select: none;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.sku-multi .chip:hover { border-color: var(--accent); color: var(--text); }
+.sku-multi .chip.on {
+  background: var(--accent); border-color: var(--accent); color: #0b0f1a;
+  font-weight: 600;
+}
 
 footer {
   margin-top: 20px; color: var(--muted); font-size: 12px; text-align: center;

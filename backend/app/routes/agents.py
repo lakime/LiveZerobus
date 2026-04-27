@@ -21,6 +21,7 @@ from ..agents import (
     run_reconciler,
 )
 from ..agents.db import execute, fetchall, fetchone
+from ..agents.invoice_reconciler import simulate_invoice_for_po
 from ..agents.negotiator import simulate_supplier_reply
 from ..config import Settings
 
@@ -52,14 +53,14 @@ def email_threads(
             SELECT DISTINCT ON (thread_id)
                    thread_id, created_ts AS last_ts, supplier_id,
                    supplier_email, sku, subject, intent, 'OUT' AS side
-              FROM live.email_outbox
+              FROM liveoltp.email_outbox
              ORDER BY thread_id, created_ts DESC
         ),
         last_in AS (
             SELECT DISTINCT ON (thread_id)
                    thread_id, received_ts AS last_ts, supplier_id,
                    supplier_email, sku, subject, intent_detected AS intent, 'IN' AS side
-              FROM live.email_inbox
+              FROM liveoltp.email_inbox
              ORDER BY thread_id, received_ts DESC
         ),
         unioned AS (
@@ -87,13 +88,13 @@ def email_thread(
         SELECT email_id, thread_id, created_ts AS ts, supplier_id,
                supplier_email, subject, body_md, sku, intent, sent_by,
                status, 'OUT' AS side
-          FROM live.email_outbox
+          FROM liveoltp.email_outbox
          WHERE thread_id = %s
         UNION ALL
         SELECT email_id, thread_id, received_ts AS ts, supplier_id,
                supplier_email, subject, body_md, sku, intent_detected AS intent,
                NULL AS sent_by, NULL AS status, 'IN' AS side
-          FROM live.email_inbox
+          FROM liveoltp.email_inbox
          WHERE thread_id = %s
          ORDER BY ts ASC
     """, [thread_id, thread_id])
@@ -110,11 +111,11 @@ def po_drafts(
 ) -> list[dict]:
     if status:
         return fetchall(settings,
-            "SELECT * FROM live.po_drafts WHERE status=%s "
+            "SELECT * FROM liveoltp.po_drafts WHERE status=%s "
             "ORDER BY created_ts DESC LIMIT %s",
             [status.upper(), limit])
     return fetchall(settings,
-        "SELECT * FROM live.po_drafts ORDER BY created_ts DESC LIMIT %s",
+        "SELECT * FROM liveoltp.po_drafts ORDER BY created_ts DESC LIMIT %s",
         [limit])
 
 
@@ -123,12 +124,12 @@ def budget(settings: Settings = Depends(get_settings)) -> dict:
     n = _now()
     period = f"{n.year:04d}-{n.month:02d}"
     row = fetchone(settings,
-        "SELECT balance_usd, entry_ts FROM live.budget_ledger "
+        "SELECT balance_usd, entry_ts FROM liveoltp.budget_ledger "
         "WHERE period_ym=%s AND category='SEED' "
         "ORDER BY entry_ts DESC LIMIT 1",
         [period])
     entries = fetchall(settings,
-        "SELECT * FROM live.budget_ledger WHERE period_ym=%s "
+        "SELECT * FROM liveoltp.budget_ledger WHERE period_ym=%s "
         "ORDER BY entry_ts DESC LIMIT 20", [period])
     return {
         "period_ym": period,
@@ -148,11 +149,11 @@ def applications(
 ) -> list[dict]:
     if status:
         return fetchall(settings,
-            "SELECT * FROM live.supplier_applications WHERE status=%s "
+            "SELECT * FROM liveoltp.supplier_applications WHERE status=%s "
             "ORDER BY submitted_ts DESC",
             [status.upper()])
     return fetchall(settings,
-        "SELECT * FROM live.supplier_applications "
+        "SELECT * FROM liveoltp.supplier_applications "
         "ORDER BY submitted_ts DESC LIMIT 50")
 
 
@@ -168,7 +169,7 @@ def submit_application(
         raise HTTPException(400, f"missing fields: {missing}")
     app_id = _new_id("APP")
     execute(settings, """
-        INSERT INTO live.supplier_applications
+        INSERT INTO liveoltp.supplier_applications
           (application_id, submitted_ts, supplier_name, contact_email,
            country, offered_skus, organic_cert, years_in_biz, status,
            score, agent_notes)
@@ -190,11 +191,11 @@ def invoices(
 ) -> list[dict]:
     if status:
         return fetchall(settings,
-            "SELECT * FROM live.invoice_reconciliations WHERE status=%s "
+            "SELECT * FROM liveoltp.invoice_reconciliations WHERE status=%s "
             "ORDER BY received_ts DESC LIMIT 100",
             [status.upper()])
     return fetchall(settings,
-        "SELECT * FROM live.invoice_reconciliations "
+        "SELECT * FROM liveoltp.invoice_reconciliations "
         "ORDER BY received_ts DESC LIMIT 100")
 
 
@@ -204,7 +205,7 @@ def agent_runs(
     settings: Settings = Depends(get_settings),
 ) -> list[dict]:
     return fetchall(settings,
-        "SELECT * FROM live.agent_runs ORDER BY started_ts DESC LIMIT %s",
+        "SELECT * FROM liveoltp.agent_runs ORDER BY started_ts DESC LIMIT %s",
         [limit])
 
 
@@ -244,13 +245,39 @@ def reconciler_tick(settings: Settings = Depends(get_settings)) -> dict:
     return run_reconciler(settings)
 
 
+@router.post("/invoices/simulate")
+def simulate_invoice(
+    po_id: str | None = Query(None, min_length=4),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Generate a synthetic invoice for an APPROVED PO.
+
+    If `po_id` is omitted, picks the oldest APPROVED PO without an invoice.
+    The resulting row sits in `liveoltp.invoice_reconciliations` with
+    status='NEW' until the reconciler agent processes it.
+    """
+    return simulate_invoice_for_po(settings, po_id)
+
+
 @router.post("/cycle")
 def full_cycle(settings: Settings = Depends(get_settings)) -> dict:
-    """Run the full agent chain in order. Handy for the demo."""
+    """Run the full agent chain in order. Handy for the demo.
+
+    Order matters:
+      1. negotiator    — drafts RFQs / processes inbound replies
+      2. po_drafter    — turns QUOTE threads into DRAFT POs
+      3. budget_gate   — approves / rejects DRAFT POs against the budget
+      4. simulate one synthetic invoice for an APPROVED PO without one
+      5. reconciler    — flips NEW reconciliation rows to OK / REVIEW / DISPUTE
+      6. onboarding    — scores any NEW supplier applications
+    """
     out: dict[str, Any] = {}
     out["negotiator"] = run_negotiator_once(settings)
     out["po_drafter"] = run_po_drafter(settings)
     out["budget_gate"] = run_budget_gate(settings)
-    out["onboarding"] = run_onboarding(settings)
+    # Generate at most one synthetic invoice per cycle so the demo grows
+    # invoice volume gradually rather than exploding all at once.
+    out["invoice_simulator"] = simulate_invoice_for_po(settings)
     out["reconciler"] = run_reconciler(settings)
+    out["onboarding"] = run_onboarding(settings)
     return out
