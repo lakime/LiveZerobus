@@ -209,3 +209,39 @@ CREATE TABLE IF NOT EXISTS liveoltp.agent_runs (
   error_msg     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_agent_runs_ts ON liveoltp.agent_runs (started_ts DESC);
+
+-- SAP PO lines (synced from gd_sap_open_po_lines via lakebase_sync)
+CREATE TABLE IF NOT EXISTS liveoltp.sap_po_lines (
+  po_number          TEXT        NOT NULL,
+  po_item            INT         NOT NULL,
+  event_type         TEXT,
+  supplier_id        TEXT,
+  supplier_name      TEXT,
+  supplier_tier      TEXT,
+  sku                TEXT,
+  quantity_g         DOUBLE PRECISION,
+  unit_price_usd     DOUBLE PRECISION,
+  net_value_usd      DOUBLE PRECISION,
+  delivery_date_ts   TIMESTAMPTZ,
+  qty_received_g     DOUBLE PRECISION,
+  qty_outstanding_g  DOUBLE PRECISION,
+  po_status          TEXT,
+  event_ts           TIMESTAMPTZ,
+  PRIMARY KEY (po_number, po_item)
+);
+
+-- SAP 3-way invoice match (synced from gd_sap_invoice_matching via lakebase_sync)
+CREATE TABLE IF NOT EXISTS liveoltp.sap_invoice_matching (
+  invoice_doc_number TEXT        PRIMARY KEY,
+  po_number          TEXT,
+  po_item            INT,
+  supplier_id        TEXT,
+  sku                TEXT,
+  net_amount_usd     DOUBLE PRECISION,
+  po_net_value_usd   DOUBLE PRECISION,
+  gr_qty_g           DOUBLE PRECISION,
+  variance_usd       DOUBLE PRECISION,
+  status             TEXT,
+  match_status       TEXT,
+  event_ts           TIMESTAMPTZ
+);

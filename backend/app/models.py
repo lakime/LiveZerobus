@@ -64,3 +64,36 @@ class RecommendationRow(BaseModel):
     input_pct_24h: Optional[float] = None
     decision: str
     rationale: Optional[str] = None
+
+
+class SapPoLineRow(BaseModel):
+    po_number: str
+    po_item: int
+    event_type: Optional[str] = None
+    supplier_id: Optional[str] = None
+    supplier_name: Optional[str] = None
+    supplier_tier: Optional[str] = None
+    sku: Optional[str] = None
+    quantity_g: Optional[float] = None
+    unit_price_usd: Optional[float] = None
+    net_value_usd: Optional[float] = None
+    delivery_date_ts: Optional[datetime] = None
+    qty_received_g: Optional[float] = None
+    qty_outstanding_g: Optional[float] = None
+    po_status: Optional[str] = None
+    event_ts: Optional[datetime] = None
+
+
+class SapInvoiceMatchRow(BaseModel):
+    invoice_doc_number: str
+    po_number: Optional[str] = None
+    po_item: Optional[int] = None
+    supplier_id: Optional[str] = None
+    sku: Optional[str] = None
+    net_amount_usd: Optional[float] = None
+    po_net_value_usd: Optional[float] = None
+    gr_qty_g: Optional[float] = None
+    variance_usd: Optional[float] = None
+    status: Optional[str] = None
+    match_status: Optional[str] = None
+    event_ts: Optional[datetime] = None

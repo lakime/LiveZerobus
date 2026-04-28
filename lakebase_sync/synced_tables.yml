@@ -57,3 +57,15 @@ tables:
     primary_keys: [recommendation_id]
     scheduling_policy: SNAPSHOT
     snapshot_interval_seconds: 30
+
+  - source: ${catalog}.${schema}.gd_sap_open_po_lines
+    target: sap_po_lines
+    primary_keys: [po_number, po_item]
+    scheduling_policy: SNAPSHOT
+    snapshot_interval_seconds: 30
+
+  - source: ${catalog}.${schema}.gd_sap_invoice_matching
+    target: sap_invoice_matching
+    primary_keys: [invoice_doc_number]
+    scheduling_policy: SNAPSHOT
+    snapshot_interval_seconds: 30

@@ -12,10 +12,11 @@ import BudgetPanel from "./components/BudgetPanel";
 import OnboardingPanel from "./components/OnboardingPanel";
 import InvoicesPanel from "./components/InvoicesPanel";
 import AgentRunsPanel from "./components/AgentRunsPanel";
+import SapPanel from "./components/SapPanel";
 
 const REFRESH_MS = 3000;
 
-type Tab = "dashboard" | "emails" | "po" | "onboarding" | "invoices" | "runs";
+type Tab = "dashboard" | "emails" | "po" | "onboarding" | "invoices" | "runs" | "sap";
 
 export default function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -63,6 +64,7 @@ export default function App() {
         <Tab id="onboarding" on={tab} onSet={setTab}>Supplier onboarding</Tab>
         <Tab id="invoices"   on={tab} onSet={setTab}>Invoices</Tab>
         <Tab id="runs"       on={tab} onSet={setTab}>Agent runs</Tab>
+        <Tab id="sap"        on={tab} onSet={setTab}>SAP P2P</Tab>
       </nav>
 
       {tab === "dashboard" && (
@@ -128,6 +130,13 @@ export default function App() {
         <section className="card">
           <h2>Agent run log</h2>
           <AgentRunsPanel tick={tick} />
+        </section>
+      )}
+
+      {tab === "sap" && (
+        <section className="card tall">
+          <h2>SAP Procure-to-Pay</h2>
+          <SapPanel tick={tick} />
         </section>
       )}
 

@@ -10,6 +10,8 @@ from ..models import (
     DemandHourRow,
     InventoryRow,
     RecommendationRow,
+    SapInvoiceMatchRow,
+    SapPoLineRow,
     SupplierQuoteRow,
 )
 
@@ -123,6 +125,59 @@ def recommendations(
           FROM liveoltp.procurement_recommendations
           {where}
          ORDER BY created_ts DESC
+         LIMIT %s
+    """, params)
+
+
+# -------------------- SAP PO lines --------------------
+
+
+@router.get("/sap/po-lines", response_model=list[SapPoLineRow])
+def sap_po_lines(
+    status: str | None = Query(default=None),
+    supplier_id: str | None = Query(default=None),
+    limit: int = Query(100, ge=1, le=1000),
+    settings: Settings = Depends(get_settings),
+):
+    where, params = [], []
+    if status:
+        where.append("po_status = %s"); params.append(status.upper())
+    if supplier_id:
+        where.append("supplier_id = %s"); params.append(supplier_id)
+    params.append(limit)
+    w = f"WHERE {' AND '.join(where)}" if where else ""
+    return query(settings, f"""
+        SELECT po_number, po_item, event_type, supplier_id, supplier_name,
+               supplier_tier, sku, quantity_g, unit_price_usd, net_value_usd,
+               delivery_date_ts, qty_received_g, qty_outstanding_g, po_status, event_ts
+          FROM liveoltp.sap_po_lines
+          {w}
+         ORDER BY event_ts DESC
+         LIMIT %s
+    """, params)
+
+
+# -------------------- SAP invoice matching --------------------
+
+
+@router.get("/sap/invoice-matching", response_model=list[SapInvoiceMatchRow])
+def sap_invoice_matching(
+    match_status: str | None = Query(default=None),
+    limit: int = Query(100, ge=1, le=1000),
+    settings: Settings = Depends(get_settings),
+):
+    where, params = [], []
+    if match_status:
+        where.append("match_status = %s"); params.append(match_status.upper())
+    params.append(limit)
+    w = f"WHERE {' AND '.join(where)}" if where else ""
+    return query(settings, f"""
+        SELECT invoice_doc_number, po_number, po_item, supplier_id, sku,
+               net_amount_usd, po_net_value_usd, gr_qty_g, variance_usd,
+               status, match_status, event_ts
+          FROM liveoltp.sap_invoice_matching
+          {w}
+         ORDER BY event_ts DESC
          LIMIT %s
     """, params)
 
