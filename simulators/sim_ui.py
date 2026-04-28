@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -95,6 +96,16 @@ _log_buffer: list[dict] = []
 _LOG_BUFFER_MAX = 300
 
 _SENT_RE = re.compile(r"sent=(\d+)")
+
+# ---------------------------------------------------------------------------
+# Lakebase sync state
+# ---------------------------------------------------------------------------
+
+_sync_running = False
+_sync_last_ts: float = 0.0
+_sync_last_result: str = "never"   # "success" | "error" | "never"
+_sync_next_at: float = 0.0
+_SYNC_INTERVAL = 60                # seconds between automatic syncs
 
 
 def _broadcast(msg: dict) -> None:
@@ -179,6 +190,53 @@ def _stop(name: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Lakebase sync helpers
+# ---------------------------------------------------------------------------
+
+async def _run_sync_once() -> None:
+    global _sync_running, _sync_last_ts, _sync_last_result
+    if _sync_running:
+        return
+    _sync_running = True
+    _broadcast({"sim": "sync", "msg": "▶ Lakebase sync starting…", "ts": time.time()})
+    try:
+        apply_py = str(
+            pathlib.Path(__file__).resolve().parent.parent / "lakebase_sync" / "apply.py"
+        )
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, apply_py,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await proc.communicate()
+        output = (stdout or b"").decode(errors="replace")
+        for line in output.splitlines():
+            if line.strip():
+                _broadcast({"sim": "sync", "msg": line, "ts": time.time()})
+        _sync_last_ts = time.time()
+        if proc.returncode == 0:
+            _sync_last_result = "success"
+            _broadcast({"sim": "sync", "msg": "✔ Lakebase sync complete", "ts": time.time()})
+        else:
+            _sync_last_result = "error"
+            _broadcast({"sim": "sync", "msg": f"✗ Sync failed (rc={proc.returncode})", "ts": time.time()})
+    except Exception as exc:
+        _sync_last_result = "error"
+        _broadcast({"sim": "sync", "msg": f"✗ Sync error: {exc}", "ts": time.time()})
+    finally:
+        _sync_running = False
+
+
+async def _sync_loop() -> None:
+    global _sync_next_at
+    await asyncio.sleep(10)          # brief startup delay
+    while True:
+        _sync_next_at = time.time() + _SYNC_INTERVAL
+        await _run_sync_once()
+        await asyncio.sleep(_SYNC_INTERVAL)
+
+
+# ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 
@@ -186,7 +244,13 @@ def _stop(name: str) -> dict:
 async def _lifespan(app: FastAPI):
     global _main_loop
     _main_loop = asyncio.get_running_loop()
+    task = asyncio.create_task(_sync_loop())
     yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(title="SimUI", docs_url=None, redoc_url=None, lifespan=_lifespan)
@@ -291,6 +355,22 @@ async def sse_logs():
 def check_env():
     keys = ["DATABRICKS_HOST", "DATABRICKS_CLIENT_ID", "DATABRICKS_CLIENT_SECRET", "ZEROBUS_ENDPOINT"]
     return {k: ("✓ set" if os.environ.get(k) else "✗ missing") for k in keys}
+
+
+@app.get("/api/sync-status")
+def get_sync_status():
+    return {
+        "running": _sync_running,
+        "last_ts": _sync_last_ts,
+        "last_result": _sync_last_result,
+        "next_in_s": max(0, int(_sync_next_at - time.time())) if _sync_next_at else None,
+    }
+
+
+@app.post("/api/sync-now")
+async def trigger_sync_now():
+    asyncio.create_task(_run_sync_once())
+    return {"ok": True}
 
 
 # ── Serve the HTML UI ────────────────────────────────────────────────────────
@@ -442,6 +522,26 @@ header h1 { font-size: 20px; letter-spacing: 0.3px; }
 .log-sim { flex-shrink: 0; width: 80px; font-weight: 600; }
 .log-msg { word-break: break-all; }
 .log-line.exit .log-msg { color: var(--bad); }
+
+/* Pipeline panel */
+.pipeline-panel {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; overflow: hidden; margin-bottom: 20px;
+}
+.pipeline-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 9px 14px; border-bottom: 1px solid var(--border);
+  font-size: 11px; color: var(--muted); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 1px;
+}
+.sync-dot { font-size: 10px; transition: color 0.3s; }
+.sync-dot.idle    { color: var(--muted); }
+.sync-dot.ok      { color: var(--good); }
+.sync-dot.error   { color: var(--bad); }
+.sync-dot.running { color: var(--accent); animation: pulse 1s ease infinite; }
+@keyframes lb-pulse {
+  0%,100% { stroke-opacity:1; } 50% { stroke-opacity:0.25; }
+}
 </style>
 </head>
 <body>
@@ -467,11 +567,137 @@ header h1 { font-size: 20px; letter-spacing: 0.3px; }
 
 <div class="sim-grid" id="sim-grid"></div>
 
+<!-- ═══ Pipeline visualization ═══════════════════════════════════════════ -->
+<div class="pipeline-panel">
+  <div class="pipeline-header">
+    <span>Data Pipeline · Lakeflow SDP</span>
+    <div style="display:flex;gap:10px;align-items:center">
+      <span class="sync-dot idle" id="sync-badge">●</span>
+      <span style="font-size:11px;color:var(--muted)" id="sync-last-info">Last sync: never</span>
+      <span style="font-size:11px;color:var(--muted)" id="sync-next-info"></span>
+      <button class="btn" style="padding:3px 10px;font-size:11px" onclick="triggerSync()">⟳ Sync now</button>
+    </div>
+  </div>
+  <div style="padding:10px 14px 16px;overflow-x:auto;text-align:center">
+    <svg id="pipeline-svg" viewBox="0 0 660 310" width="660" height="310"
+         style="display:inline-block;max-width:100%;font-family:'JetBrains Mono',Menlo,Consolas,monospace">
+
+      <!-- ── Background vertical pipe ──────────────────────────── -->
+      <line x1="330" y1="70" x2="330" y2="290" stroke="#1d2544" stroke-width="3"/>
+
+      <!-- ── Sim → Zerobus convergence paths (dashed) ──────────── -->
+      <path d="M 55,43 C 55,58 330,58 330,70"  fill="none" stroke="#4ea1ff" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="3,3"/>
+      <path d="M 165,43 C 165,58 330,58 330,70" fill="none" stroke="#21c07a" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="3,3"/>
+      <path d="M 275,43 C 275,58 330,58 330,70" fill="none" stroke="#f2b840" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="3,3"/>
+      <path d="M 385,43 C 385,58 330,58 330,70" fill="none" stroke="#b06bff" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="3,3"/>
+      <path d="M 495,43 C 495,58 330,58 330,70" fill="none" stroke="#ff8c42" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="3,3"/>
+      <path d="M 605,43 C 605,58 330,58 330,70" fill="none" stroke="#00d4aa" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="3,3"/>
+
+      <!-- ── Stage boxes ─────────────────────────────────────────── -->
+      <!-- Zerobus -->
+      <rect x="240" y="70"  width="180" height="24" rx="4" fill="#0d111e" stroke="#ff6640" stroke-width="1.2"/>
+      <rect x="240" y="70"  width="4"   height="24" rx="1" fill="#ff6640"/>
+      <text x="252" y="86" font-size="10" fill="#ff8c68">Zerobus · Delta ingest</text>
+      <!-- Bronze -->
+      <rect x="240" y="110" width="180" height="24" rx="4" fill="#0d111e" stroke="#cd8832" stroke-width="1.2"/>
+      <rect x="240" y="110" width="4"   height="24" rx="1" fill="#cd8832"/>
+      <text x="252" y="126" font-size="10" fill="#d9a050">Bronze Δ  ·  raw events</text>
+      <!-- Silver -->
+      <rect x="240" y="150" width="180" height="24" rx="4" fill="#0d111e" stroke="#9baecf" stroke-width="1.2"/>
+      <rect x="240" y="150" width="4"   height="24" rx="1" fill="#9baecf"/>
+      <text x="252" y="166" font-size="10" fill="#b0c2de">Silver Δ  ·  validated</text>
+      <!-- Gold -->
+      <rect x="240" y="190" width="180" height="24" rx="4" fill="#0d111e" stroke="#f5c542" stroke-width="1.2"/>
+      <rect x="240" y="190" width="4"   height="24" rx="1" fill="#f5c542"/>
+      <text x="252" y="206" font-size="10" fill="#f5cc5a">Gold Δ  ·  ML-scored</text>
+      <!-- Lakebase -->
+      <rect x="240" y="230" width="180" height="24" rx="4" fill="#0d111e" stroke="#21c07a" stroke-width="1.2" id="lb-box"/>
+      <rect x="240" y="230" width="4"   height="24" rx="1" fill="#21c07a"/>
+      <text x="252" y="246" font-size="10" fill="#3dd68c">Lakebase Postgres</text>
+      <!-- FastAPI / React -->
+      <rect x="240" y="270" width="180" height="24" rx="4" fill="#0d111e" stroke="#4ea1ff" stroke-width="1.2"/>
+      <rect x="240" y="270" width="4"   height="24" rx="1" fill="#4ea1ff"/>
+      <text x="252" y="286" font-size="10" fill="#6ab8ff">FastAPI · React UI</text>
+
+      <!-- ── Sync branch (left of Lakebase) ─────────────────────── -->
+      <line x1="100" y1="242" x2="237" y2="242" stroke="#21c07a" stroke-width="1.5" stroke-opacity="0.45" stroke-dasharray="4,3"/>
+      <polygon points="233,239 241,242 233,245" fill="#21c07a" opacity="0.6"/>
+      <text x="168" y="235" text-anchor="middle" font-size="8" fill="#21c07a" font-weight="600" letter-spacing="0.8">LAKEBASE SYNC</text>
+      <text x="168" y="255" text-anchor="middle" font-size="8"  fill="#8a97b8" id="sync-ts-svg">never</text>
+
+      <!-- ── Sim nodes ───────────────────────────────────────────── -->
+      <circle id="node-inv" cx="55"  cy="30" r="13" fill="#0d111e" stroke="#263056" stroke-width="1.5"/>
+      <text x="55"  y="34" text-anchor="middle" font-size="8.5" fill="#8a97b8" pointer-events="none">Inv</text>
+      <text x="55"  y="53" text-anchor="middle" font-size="7"   fill="#4d5a7a" pointer-events="none">Inventory</text>
+
+      <circle id="node-sup" cx="165" cy="30" r="13" fill="#0d111e" stroke="#263056" stroke-width="1.5"/>
+      <text x="165" y="34" text-anchor="middle" font-size="8.5" fill="#8a97b8" pointer-events="none">Sup</text>
+      <text x="165" y="53" text-anchor="middle" font-size="7"   fill="#4d5a7a" pointer-events="none">Supplier</text>
+
+      <circle id="node-dem" cx="275" cy="30" r="13" fill="#0d111e" stroke="#263056" stroke-width="1.5"/>
+      <text x="275" y="34" text-anchor="middle" font-size="8.5" fill="#8a97b8" pointer-events="none">Dem</text>
+      <text x="275" y="53" text-anchor="middle" font-size="7"   fill="#4d5a7a" pointer-events="none">Demand</text>
+
+      <circle id="node-cmd" cx="385" cy="30" r="13" fill="#0d111e" stroke="#263056" stroke-width="1.5"/>
+      <text x="385" y="34" text-anchor="middle" font-size="8.5" fill="#8a97b8" pointer-events="none">Cmd</text>
+      <text x="385" y="53" text-anchor="middle" font-size="7"   fill="#4d5a7a" pointer-events="none">Commodity</text>
+
+      <circle id="node-sap" cx="495" cy="30" r="13" fill="#0d111e" stroke="#263056" stroke-width="1.5"/>
+      <text x="495" y="34" text-anchor="middle" font-size="8.5" fill="#8a97b8" pointer-events="none">SAP</text>
+      <text x="495" y="53" text-anchor="middle" font-size="7"   fill="#4d5a7a" pointer-events="none">SAP P2P</text>
+
+      <circle id="node-iot" cx="605" cy="30" r="13" fill="#0d111e" stroke="#263056" stroke-width="1.5"/>
+      <text x="605" y="34" text-anchor="middle" font-size="8.5" fill="#8a97b8" pointer-events="none">IoT</text>
+      <text x="605" y="53" text-anchor="middle" font-size="7"   fill="#4d5a7a" pointer-events="none">IoT Sensors</text>
+
+      <!-- ── Sim spark particles (hidden until sim is running) ──── -->
+      <g id="sparks-inv" style="opacity:0">
+        <circle r="2.5" fill="#4ea1ff"><animateMotion dur="1.2s" repeatCount="indefinite" begin="0s"    path="M 55,43 C 55,58 330,58 330,70"/></circle>
+        <circle r="2.5" fill="#4ea1ff"><animateMotion dur="1.2s" repeatCount="indefinite" begin="0.6s"  path="M 55,43 C 55,58 330,58 330,70"/></circle>
+      </g>
+      <g id="sparks-sup" style="opacity:0">
+        <circle r="2.5" fill="#21c07a"><animateMotion dur="1.2s" repeatCount="indefinite" begin="0.1s"  path="M 165,43 C 165,58 330,58 330,70"/></circle>
+        <circle r="2.5" fill="#21c07a"><animateMotion dur="1.2s" repeatCount="indefinite" begin="0.7s"  path="M 165,43 C 165,58 330,58 330,70"/></circle>
+      </g>
+      <g id="sparks-dem" style="opacity:0">
+        <circle r="2.5" fill="#f2b840"><animateMotion dur="1.2s" repeatCount="indefinite" begin="0.2s"  path="M 275,43 C 275,58 330,58 330,70"/></circle>
+        <circle r="2.5" fill="#f2b840"><animateMotion dur="1.2s" repeatCount="indefinite" begin="0.8s"  path="M 275,43 C 275,58 330,58 330,70"/></circle>
+      </g>
+      <g id="sparks-cmd" style="opacity:0">
+        <circle r="2.5" fill="#b06bff"><animateMotion dur="1.2s" repeatCount="indefinite" begin="0.3s"  path="M 385,43 C 385,58 330,58 330,70"/></circle>
+        <circle r="2.5" fill="#b06bff"><animateMotion dur="1.2s" repeatCount="indefinite" begin="0.9s"  path="M 385,43 C 385,58 330,58 330,70"/></circle>
+      </g>
+      <g id="sparks-sap" style="opacity:0">
+        <circle r="2.5" fill="#ff8c42"><animateMotion dur="1.2s" repeatCount="indefinite" begin="0.4s"  path="M 495,43 C 495,58 330,58 330,70"/></circle>
+        <circle r="2.5" fill="#ff8c42"><animateMotion dur="1.2s" repeatCount="indefinite" begin="1.0s"  path="M 495,43 C 495,58 330,58 330,70"/></circle>
+      </g>
+      <g id="sparks-iot" style="opacity:0">
+        <circle r="2.5" fill="#00d4aa"><animateMotion dur="1.2s" repeatCount="indefinite" begin="0.5s"  path="M 605,43 C 605,58 330,58 330,70"/></circle>
+        <circle r="2.5" fill="#00d4aa"><animateMotion dur="1.2s" repeatCount="indefinite" begin="1.1s"  path="M 605,43 C 605,58 330,58 330,70"/></circle>
+      </g>
+
+      <!-- ── Main pipe flow particles ──────────────────────────── -->
+      <g id="main-particles" style="opacity:0">
+        <circle r="3" fill="#4ea1ff" opacity="0.8"><animateMotion dur="2.0s" repeatCount="indefinite" begin="0s"   path="M 330,70 L 330,290"/></circle>
+        <circle r="3" fill="#f5c542" opacity="0.8"><animateMotion dur="2.0s" repeatCount="indefinite" begin="0.5s" path="M 330,70 L 330,290"/></circle>
+        <circle r="3" fill="#21c07a" opacity="0.8"><animateMotion dur="2.0s" repeatCount="indefinite" begin="1.0s" path="M 330,70 L 330,290"/></circle>
+        <circle r="3" fill="#cd8832" opacity="0.8"><animateMotion dur="2.0s" repeatCount="indefinite" begin="1.5s" path="M 330,70 L 330,290"/></circle>
+      </g>
+
+      <!-- ── Sync branch particle ──────────────────────────────── -->
+      <g id="sync-particles" style="opacity:0">
+        <circle r="2.5" fill="#21c07a" opacity="0.9"><animateMotion dur="0.8s" repeatCount="indefinite" begin="0s" path="M 100,242 L 238,242"/></circle>
+      </g>
+    </svg>
+  </div>
+</div>
+
 <div class="log-panel">
   <div class="log-header">
     <div class="log-filter" id="log-filter">
       <span style="color:var(--muted);margin-right:4px">Filter:</span>
       <button class="chip on" data-sim="all" onclick="setFilter('all',this)" style="background:var(--accent);border-color:var(--accent)">ALL</button>
+      <button class="chip" data-sim="sync" onclick="setFilter('sync',this)" style="border-color:#21c07a">sync</button>
     </div>
     <button class="btn" style="padding:4px 10px;font-size:11px" onclick="clearLog()">Clear</button>
   </div>
@@ -482,7 +708,16 @@ header h1 { font-size: 20px; letter-spacing: 0.3px; }
 <script>
 const SIM_COLORS = {
   inventory: '#4ea1ff', suppliers: '#21c07a', demand: '#f2b840',
-  commodity: '#b06bff', sap: '#ff8c42', iot: '#00d4aa'
+  commodity: '#b06bff', sap: '#ff8c42', iot: '#00d4aa', sync: '#21c07a'
+};
+// abbreviation → simulator name mapping for pipeline node updates
+const SIM_ABBR = {
+  inv: 'inventory', sup: 'suppliers', dem: 'demand',
+  cmd: 'commodity', sap: 'sap',       iot: 'iot',
+};
+const ABBR_COLOR = {
+  inv:'#4ea1ff', sup:'#21c07a', dem:'#f2b840',
+  cmd:'#b06bff', sap:'#ff8c42', iot:'#00d4aa',
 };
 
 let state = {};
@@ -620,6 +855,7 @@ async function pollStatus() {
     const sims = await fetch('/api/simulators').then(r => r.json());
     if (firstLoad) { renderGrid(sims); firstLoad = false; }
     else { for (const [name, s] of Object.entries(sims)) patchCard(name, s); }
+    updatePipeline(sims);
   } catch {}
 }
 pollStatus();
@@ -661,6 +897,92 @@ async function clearLog() {
   logEl.innerHTML = '';
   await fetch('/api/logs', { method: 'DELETE' });
 }
+
+// ── Pipeline diagram updates ───────────────────────────────────────────────
+function updatePipeline(sims) {
+  for (const [abbr, simName] of Object.entries(SIM_ABBR)) {
+    const s = sims[simName];
+    const running = s?.running ?? false;
+    const col = ABBR_COLOR[abbr];
+    const node = document.getElementById(`node-${abbr}`);
+    const sparks = document.getElementById(`sparks-${abbr}`);
+    if (node) {
+      node.style.stroke = running ? col : '#263056';
+      node.style.strokeWidth = running ? '2' : '1.5';
+      node.style.fill = running ? col + '22' : '#0d111e';
+    }
+    if (sparks) sparks.style.opacity = running ? '1' : '0';
+  }
+  const anyRunning = Object.values(sims).some(s => s.running);
+  const mp = document.getElementById('main-particles');
+  if (mp) mp.style.opacity = anyRunning ? '1' : '0';
+}
+
+// ── Lakebase sync status ───────────────────────────────────────────────────
+let _syncPollTs = null;
+let _syncNextIn = null;
+
+function formatAgo(s) {
+  if (s <= 0) return 'now';
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+}
+
+async function pollSyncStatus() {
+  try {
+    const s = await fetch('/api/sync-status').then(r => r.json());
+    _syncPollTs = Date.now() / 1000;
+    _syncNextIn = s.next_in_s;
+    const badge = document.getElementById('sync-badge');
+    const lastInfo = document.getElementById('sync-last-info');
+    const syncPart = document.getElementById('sync-particles');
+    const lbBox = document.getElementById('lb-box');
+    const syncSvgTs = document.getElementById('sync-ts-svg');
+
+    if (s.running) {
+      if (badge) { badge.className = 'sync-dot running'; }
+      if (syncPart) syncPart.style.opacity = '1';
+      if (lbBox) lbBox.style.animation = 'lb-pulse 1.2s ease infinite';
+      if (lastInfo) { lastInfo.textContent = 'Syncing…'; lastInfo.style.color = 'var(--accent)'; }
+    } else {
+      if (syncPart) syncPart.style.opacity = '0';
+      if (lbBox) lbBox.style.animation = '';
+      if (s.last_result === 'success') {
+        if (badge) badge.className = 'sync-dot ok';
+        if (s.last_ts && lastInfo) {
+          const ago = Math.round(Date.now()/1000 - s.last_ts);
+          lastInfo.textContent = '✔ ' + formatAgo(ago) + ' ago';
+          lastInfo.style.color = 'var(--good)';
+          if (syncSvgTs) syncSvgTs.textContent = formatAgo(ago) + ' ago';
+        }
+      } else if (s.last_result === 'error') {
+        if (badge) badge.className = 'sync-dot error';
+        if (lastInfo) { lastInfo.textContent = '✗ sync failed'; lastInfo.style.color = 'var(--bad)'; }
+      } else {
+        if (badge) badge.className = 'sync-dot idle';
+        if (lastInfo) { lastInfo.textContent = 'Last sync: never'; lastInfo.style.color = 'var(--muted)'; }
+      }
+    }
+  } catch {}
+}
+
+function updateSyncCountdown() {
+  const el = document.getElementById('sync-next-info');
+  if (!el || _syncNextIn === null || _syncPollTs === null) return;
+  const elapsed = Math.round(Date.now()/1000 - _syncPollTs);
+  const remaining = Math.max(0, _syncNextIn - elapsed);
+  el.textContent = 'Next: ' + formatAgo(remaining);
+}
+
+async function triggerSync() {
+  await fetch('/api/sync-now', { method: 'POST' });
+  setTimeout(pollSyncStatus, 400);
+}
+
+pollSyncStatus();
+setInterval(pollSyncStatus, 5000);
+setInterval(updateSyncCountdown, 1000);
 
 // ── SSE log stream ─────────────────────────────────────────────────────────
 const SIM_LABEL_COLORS = SIM_COLORS;

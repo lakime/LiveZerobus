@@ -14,10 +14,11 @@ import InvoicesPanel from "./components/InvoicesPanel";
 import AgentRunsPanel from "./components/AgentRunsPanel";
 import SapPanel from "./components/SapPanel";
 import IotFieldsPanel from "./components/IotFieldsPanel";
+import PipelinePanel from "./components/PipelinePanel";
 
 const REFRESH_MS = 3000;
 
-type Tab = "dashboard" | "emails" | "po" | "onboarding" | "invoices" | "runs" | "sap" | "iot";
+type Tab = "dashboard" | "emails" | "po" | "onboarding" | "invoices" | "runs" | "sap" | "iot" | "pipeline";
 
 export default function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -37,7 +38,7 @@ export default function App() {
   async function runCycle() {
     setBusy(true);
     try { await api.runCycle(); }
-    catch { /* ignore — the dashboard will reveal failures */ }
+    catch { /* ignore */ }
     finally {
       setBusy(false);
       setTick(t => t + 1);
@@ -67,6 +68,7 @@ export default function App() {
         <Tab id="runs"       on={tab} onSet={setTab}>Agent runs</Tab>
         <Tab id="sap"        on={tab} onSet={setTab}>SAP P2P</Tab>
         <Tab id="iot"        on={tab} onSet={setTab}>IoT Fields</Tab>
+        <Tab id="pipeline"   on={tab} onSet={setTab}>Pipeline</Tab>
       </nav>
 
       {tab === "dashboard" && (
@@ -143,8 +145,14 @@ export default function App() {
       )}
 
       {tab === "iot" && (
-        <section style={{ padding: "0 0 24px" }}>
+        <section style={{ padding:"0 0 24px" }}>
           <IotFieldsPanel tick={tick} />
+        </section>
+      )}
+
+      {tab === "pipeline" && (
+        <section style={{ padding:"0 0 24px" }}>
+          <PipelinePanel tick={tick} />
         </section>
       )}
 
