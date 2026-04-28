@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
@@ -181,13 +182,14 @@ def _stop(name: str) -> dict:
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="SimUI", docs_url=None, redoc_url=None)
-
-
-@app.on_event("startup")
-async def _on_startup():
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
     global _main_loop
     _main_loop = asyncio.get_running_loop()
+    yield
+
+
+app = FastAPI(title="SimUI", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
 
 # ── REST endpoints ───────────────────────────────────────────────────────────
