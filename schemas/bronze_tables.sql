@@ -124,6 +124,80 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.dim_supplier (
   notes          STRING
 ) USING DELTA;
 
+-- --------------------------------------------------------------------
+-- 5. SAP Purchase Order events (MM module)
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.bz_sap_purchase_orders (
+  event_id         STRING    NOT NULL,
+  event_ts         TIMESTAMP NOT NULL,
+  po_number        STRING    NOT NULL,
+  po_item          INT       NOT NULL,
+  event_type       STRING    NOT NULL,            -- CREATED|APPROVED|CHANGED|CANCELLED
+  supplier_id      STRING    NOT NULL,
+  sku              STRING    NOT NULL,
+  quantity_g       DOUBLE    NOT NULL,
+  unit_price_usd   DOUBLE    NOT NULL,
+  net_value_usd    DOUBLE    NOT NULL,
+  currency         STRING,
+  delivery_date_ts TIMESTAMP,
+  plant            STRING,
+  company_code     STRING,
+  purchase_org     STRING
+)
+USING DELTA
+TBLPROPERTIES (
+  'delta.appendOnly' = 'true'
+);
+
+-- --------------------------------------------------------------------
+-- 6. SAP Goods Receipt events (MIGO — movement 101/122)
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.bz_sap_goods_receipts (
+  event_id         STRING    NOT NULL,
+  event_ts         TIMESTAMP NOT NULL,
+  gr_doc_number    STRING    NOT NULL,
+  gr_item          INT       NOT NULL,
+  po_number        STRING    NOT NULL,
+  po_item          INT       NOT NULL,
+  sku              STRING    NOT NULL,
+  qty_received_g   DOUBLE    NOT NULL,            -- negative for movement_type 122 (reversal)
+  room_id          STRING,
+  movement_type    STRING    NOT NULL,            -- 101=GR vs PO, 122=reversal
+  batch_id         STRING,
+  posting_date_ts  TIMESTAMP,
+  delivery_note    STRING
+)
+USING DELTA
+TBLPROPERTIES (
+  'delta.appendOnly' = 'true'
+);
+
+-- --------------------------------------------------------------------
+-- 7. SAP Invoice documents (LIV/MIRO — 3-way match)
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.bz_sap_invoice_documents (
+  event_id             STRING    NOT NULL,
+  event_ts             TIMESTAMP NOT NULL,
+  invoice_doc_number   STRING    NOT NULL,
+  po_number            STRING    NOT NULL,
+  po_item              INT       NOT NULL,
+  supplier_id          STRING    NOT NULL,
+  invoice_date_ts      TIMESTAMP,
+  posting_date_ts      TIMESTAMP,
+  quantity_invoiced_g  DOUBLE,
+  unit_price_usd       DOUBLE,
+  net_amount_usd       DOUBLE    NOT NULL,
+  tax_amount_usd       DOUBLE,
+  currency             STRING,
+  payment_terms        STRING,
+  status               STRING    NOT NULL,        -- POSTED|PARKED|BLOCKED|CLEARED
+  variance_usd         DOUBLE
+)
+USING DELTA
+TBLPROPERTIES (
+  'delta.appendOnly' = 'true'
+);
+
 -- Grants for the app service principal
 GRANT USE CATALOG ON CATALOG ${catalog} TO `${service_principal}`;
 GRANT USE SCHEMA, SELECT

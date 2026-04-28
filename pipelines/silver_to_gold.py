@@ -126,3 +126,99 @@ def gd_supplier_quotes_current():
                .where(F.col("rn") == 1)
                .drop("rn")
     )
+
+
+# ---------------- SAP open PO lines ----------------
+
+
+@dp.table(
+    name="gd_sap_open_po_lines",
+    comment="Latest SAP PO event per line with GR receipt status and outstanding quantity.",
+)
+def gd_sap_open_po_lines():
+    sv_po = dp.read("sv_sap_purchase_orders")
+    w_po  = Window.partitionBy("po_number", "po_item").orderBy(F.col("event_ts").desc())
+    po_latest = (
+        sv_po.withColumn("rn", F.row_number().over(w_po))
+             .where(F.col("rn") == 1)
+             .drop("rn")
+    )
+
+    sv_gr  = dp.read("sv_sap_goods_receipts")
+    gr_agg = sv_gr.groupBy("po_number", "po_item").agg(
+        F.sum("qty_received_g").alias("qty_received_g")
+    )
+
+    dim = spark.table(f"{CATALOG}.{SCHEMA}.dim_supplier")  # noqa: F821
+    supplier_info = dim.select(
+        "supplier_id",
+        F.col("supplier_name").alias("supplier_name"),
+        F.col("tier").alias("supplier_tier"),
+    )
+
+    return (
+        po_latest
+        .join(gr_agg, ["po_number", "po_item"], "left")
+        .join(supplier_info, "supplier_id", "left")
+        .withColumn("qty_received_g",   F.coalesce(F.col("qty_received_g"), F.lit(0.0)))
+        .withColumn("qty_outstanding_g", F.col("quantity_g") - F.col("qty_received_g"))
+        .withColumn(
+            "po_status",
+            F.when(F.col("event_type") == "CANCELLED", "CANCELLED")
+             .when(F.col("qty_received_g") >= F.col("quantity_g") * 0.99, "FULLY_RECEIVED")
+             .when(F.col("qty_received_g") > 0, "PARTIALLY_RECEIVED")
+             .otherwise("OPEN"),
+        )
+    )
+
+
+# ---------------- SAP 3-way invoice match ----------------
+
+
+@dp.table(
+    name="gd_sap_invoice_matching",
+    comment="3-way match: SAP invoice vs PO vs GR with variance and MATCHED/VARIANCE/PENDING_GR status.",
+)
+def gd_sap_invoice_matching():
+    sv_inv = dp.read("sv_sap_invoice_documents")
+    sv_po  = dp.read("sv_sap_purchase_orders")
+    sv_gr  = dp.read("sv_sap_goods_receipts")
+
+    w_po = Window.partitionBy("po_number", "po_item").orderBy(F.col("event_ts").desc())
+    po_for_join = (
+        sv_po.withColumn("rn", F.row_number().over(w_po))
+             .where(F.col("rn") == 1)
+             .drop("rn")
+             .select(
+                 "po_number", "po_item",
+                 F.col("net_value_usd").alias("po_net_value_usd"),
+                 F.col("quantity_g").alias("po_quantity_g"),
+                 F.col("event_type").alias("po_event_type"),
+                 F.col("sku"),
+             )
+    )
+
+    gr_agg = sv_gr.groupBy("po_number", "po_item").agg(
+        F.sum("qty_received_g").alias("gr_qty_g")
+    )
+
+    w_inv = Window.partitionBy("invoice_doc_number").orderBy(F.col("event_ts").desc())
+    inv_latest = (
+        sv_inv.withColumn("rn", F.row_number().over(w_inv))
+              .where(F.col("rn") == 1)
+              .drop("rn")
+    )
+
+    return (
+        inv_latest
+        .join(po_for_join, ["po_number", "po_item"], "left")
+        .join(gr_agg,      ["po_number", "po_item"], "left")
+        .withColumn("gr_qty_g", F.coalesce(F.col("gr_qty_g"), F.lit(0.0)))
+        .withColumn(
+            "match_status",
+            F.when(F.col("po_net_value_usd").isNull(), "NO_PO")
+             .when(F.col("gr_qty_g") == 0,             "PENDING_GR")
+             .when(F.abs(F.col("variance_usd")) <= F.col("po_net_value_usd") * 0.02, "MATCHED")
+             .otherwise("VARIANCE"),
+        )
+    )

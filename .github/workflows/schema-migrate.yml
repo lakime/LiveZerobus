@@ -1,0 +1,89 @@
+# Incremental schema migration — adds new Bronze tables to an existing workspace.
+#
+# Safe to re-run at any time: all DDL uses CREATE TABLE IF NOT EXISTS and
+# dimension seeds use MERGE, so nothing is overwritten or dropped.
+#
+# When to run:
+#   * After merging a PR that adds new Bronze table definitions to
+#     schemas/bronze_tables.sql (e.g. new SAP event streams).
+#   * The full `bootstrap` workflow is for first-time catalog creation;
+#     this one is for day-2 schema evolution.
+#
+# Required GitHub repo secrets:
+#   DATABRICKS_HOST
+#   DATABRICKS_CLIENT_ID
+#   DATABRICKS_CLIENT_SECRET
+#
+# Required GitHub repo variables (or override at dispatch time):
+#   DATABRICKS_WAREHOUSE_ID    SQL Warehouse to run DDL against
+name: schema-migrate
+
+on:
+  workflow_dispatch:
+    inputs:
+      catalog:
+        description: "Unity Catalog catalog name"
+        type: string
+        default: livezerobus
+      schema:
+        description: "Unity Catalog schema name"
+        type: string
+        default: procurement
+      warehouse_id:
+        description: "Override DATABRICKS_WAREHOUSE_ID (leave empty to use repo variable)"
+        type: string
+        default: ""
+
+env:
+  DATABRICKS_HOST:          ${{ secrets.DATABRICKS_HOST }}
+  DATABRICKS_CLIENT_ID:     ${{ secrets.DATABRICKS_CLIENT_ID }}
+  DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+  UC_CATALOG:               ${{ inputs.catalog }}
+  UC_SCHEMA:                ${{ inputs.schema }}
+  WAREHOUSE_ID:             ${{ inputs.warehouse_id != '' && inputs.warehouse_id || vars.DATABRICKS_WAREHOUSE_ID }}
+
+jobs:
+  migrate:
+    name: Apply schema migrations to ${{ inputs.catalog }}.${{ inputs.schema }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install SDK
+        run: |
+          pip install --upgrade pip
+          pip install "databricks-sdk>=0.30"
+
+      - name: Validate warehouse id
+        run: |
+          if [[ -z "${WAREHOUSE_ID}" ]]; then
+            echo "::error::WAREHOUSE_ID is empty — set repo variable DATABRICKS_WAREHOUSE_ID or pass it via workflow_dispatch input."
+            exit 1
+          fi
+          echo "Running DDL against warehouse_id=${WAREHOUSE_ID}"
+
+      - name: Run setup_unity_catalog.py (idempotent)
+        env:
+          DATABRICKS_WAREHOUSE_ID: ${{ env.WAREHOUSE_ID }}
+        run: python scripts/setup_unity_catalog.py
+
+      - name: Summary — tables in target schema
+        run: |
+          python <<'PY'
+          import os
+          from databricks.sdk import WorkspaceClient
+          w = WorkspaceClient()
+          cat, sch = os.environ["UC_CATALOG"], os.environ["UC_SCHEMA"]
+          tables = sorted(w.tables.list(catalog_name=cat, schema_name=sch), key=lambda t: t.name)
+          print(f"✔ {len(tables)} table(s) in {cat}.{sch}:")
+          for t in tables:
+              kind = t.table_type.value if t.table_type else "UNKNOWN"
+              print(f"  {'bz' if t.name.startswith('bz') else ('sv' if t.name.startswith('sv') else 'gd' if t.name.startswith('gd') else '  ')} {t.name:<48} {kind}")
+          PY

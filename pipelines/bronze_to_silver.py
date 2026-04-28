@@ -102,3 +102,58 @@ def sv_commodity_prices():
         .dropDuplicates(["event_id"])
         .withColumn("ingest_ts", F.current_timestamp())
     )
+
+
+# ---------------- SAP Purchase Orders ----------------
+
+
+@dp.table(
+    name="sv_sap_purchase_orders",
+    comment="SAP MM purchase order events — deduped and quantity/price validated.",
+    table_properties={"quality": "silver"},
+)
+@dp.expect_or_drop("positive_qty",   "quantity_g > 0")
+@dp.expect_or_drop("positive_price", "unit_price_usd > 0")
+@dp.expect_or_drop("has_supplier",   "supplier_id IS NOT NULL")
+def sv_sap_purchase_orders():
+    return (
+        _bronze("bz_sap_purchase_orders")
+        .dropDuplicates(["event_id"])
+        .withColumn("ingest_ts", F.current_timestamp())
+    )
+
+
+# ---------------- SAP Goods Receipts ----------------
+
+
+@dp.table(
+    name="sv_sap_goods_receipts",
+    comment="SAP MIGO goods receipt events — deduped; qty may be negative for movement 122 reversals.",
+    table_properties={"quality": "silver"},
+)
+@dp.expect_or_drop("has_po",  "po_number IS NOT NULL")
+@dp.expect_or_drop("has_sku", "sku IS NOT NULL")
+def sv_sap_goods_receipts():
+    return (
+        _bronze("bz_sap_goods_receipts")
+        .dropDuplicates(["event_id"])
+        .withColumn("ingest_ts", F.current_timestamp())
+    )
+
+
+# ---------------- SAP Invoice Documents ----------------
+
+
+@dp.table(
+    name="sv_sap_invoice_documents",
+    comment="SAP LIV/MIRO invoice documents — deduped, feeds 3-way match Gold view.",
+    table_properties={"quality": "silver"},
+)
+@dp.expect_or_drop("has_po",       "po_number IS NOT NULL")
+@dp.expect_or_drop("has_supplier", "supplier_id IS NOT NULL")
+def sv_sap_invoice_documents():
+    return (
+        _bronze("bz_sap_invoice_documents")
+        .dropDuplicates(["event_id"])
+        .withColumn("ingest_ts", F.current_timestamp())
+    )

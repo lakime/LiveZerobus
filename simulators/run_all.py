@@ -37,6 +37,7 @@ def main(catalog: str, schema: str, rate: int, duration: int) -> None:
         ("suppliers",  ["python", "supplier_quotes_simulator.py",  f"--rate={1 * scale}"]),
         ("demand",     ["python", "demand_simulator.py",           f"--rate={3 * scale}"]),
         ("commodity",  ["python", "commodity_simulator.py",        f"--rate={1}"]),
+        ("sap",        ["python", "sap_simulator.py",              f"--rate={1}"]),
     ]
 
     common_args = [f"--catalog={catalog}", f"--schema={schema}"]
