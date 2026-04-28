@@ -221,6 +221,16 @@ class SapGoodsReceipt:
 
 
 @dataclasses.dataclass
+class IotSensorEvent:
+    event_id: str
+    event_ts: datetime
+    room_id: str
+    sensor_type: str
+    value: float
+    unit: str
+
+
+@dataclasses.dataclass
 class SapInvoiceDocument:
     event_id: str
     event_ts: datetime

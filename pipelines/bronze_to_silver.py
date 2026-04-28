@@ -157,3 +157,22 @@ def sv_sap_invoice_documents():
         .dropDuplicates(["event_id"])
         .withColumn("ingest_ts", F.current_timestamp())
     )
+
+
+# ---------------- IoT grow-room sensors ----------------
+
+
+@dp.table(
+    name="sv_iot_sensor_events",
+    comment="Grow-room IoT sensor readings — deduped and value-range validated.",
+    table_properties={"quality": "silver"},
+)
+@dp.expect_or_drop("has_room",   "room_id IS NOT NULL")
+@dp.expect_or_drop("has_sensor", "sensor_type IS NOT NULL")
+@dp.expect_or_drop("valid_value","value IS NOT NULL")
+def sv_iot_sensor_events():
+    return (
+        _bronze("bz_iot_sensor_events")
+        .dropDuplicates(["event_id"])
+        .withColumn("ingest_ts", F.current_timestamp())
+    )

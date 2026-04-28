@@ -66,6 +66,21 @@ class RecommendationRow(BaseModel):
     rationale: Optional[str] = None
 
 
+class IotSensorRow(BaseModel):
+    room_id: str
+    sensor_type: str
+    value: Optional[float] = None
+    unit: Optional[str] = None
+    alert_min: Optional[float] = None
+    alert_max: Optional[float] = None
+    warn_min: Optional[float] = None
+    warn_max: Optional[float] = None
+    disp_min: Optional[float] = None
+    disp_max: Optional[float] = None
+    status: Optional[str] = None  # NOMINAL | CAUTION | ALERT
+    event_ts: Optional[datetime] = None
+
+
 class SapPoLineRow(BaseModel):
     po_number: str
     po_item: int

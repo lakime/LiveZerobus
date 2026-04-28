@@ -172,6 +172,63 @@ def gd_sap_open_po_lines():
     )
 
 
+# ---------------- IoT grow-room sensor snapshot ----------------
+
+
+# Threshold table: alert / warn ranges + display bounds per sensor type.
+# These define NOMINAL (inside warn range), CAUTION (outside warn / inside alert),
+# and ALERT (outside alert range) — computed in Gold so the UI doesn't hardcode them.
+_IOT_THRESHOLDS = [
+    # sensor_type,    alert_min, alert_max, warn_min, warn_max, disp_min, disp_max
+    ("temperature",    12.0,  30.0,  15.0, 27.0,   5.0,  40.0),
+    ("humidity",       40.0,  95.0,  50.0, 90.0,  20.0, 100.0),
+    ("soil_moisture",  35.0,  97.0,  50.0, 88.0,  20.0, 100.0),
+    ("light",          80.0, 650.0, 150.0,500.0,   0.0, 800.0),
+    ("co2",           350.0,2200.0, 600.0,1600.0,250.0,2500.0),
+    ("ph",              4.0,   8.5,   5.0,  7.0,   3.5,   9.0),
+    ("ec",              0.3,   4.5,   0.8,  3.2,   0.0,   6.0),
+]
+
+
+@dp.table(
+    name="gd_iot_sensor_latest",
+    comment="Latest IoT sensor reading per (room_id, sensor_type) with thresholds and NOMINAL/CAUTION/ALERT status.",
+)
+def gd_iot_sensor_latest():
+    from pyspark.sql.window import Window as _W
+    sv = dp.read("sv_iot_sensor_events")
+
+    # Latest reading per (room_id, sensor_type)
+    w = _W.partitionBy("room_id", "sensor_type").orderBy(F.col("event_ts").desc())
+    latest = (
+        sv.withColumn("_rn", F.row_number().over(w))
+          .where(F.col("_rn") == 1)
+          .drop("_rn")
+          .select("room_id", "sensor_type", "value", "unit",
+                  F.col("event_ts").alias("event_ts"))
+    )
+
+    # Threshold reference table (in-memory, broadcast join)
+    thresh = spark.createDataFrame(  # noqa: F821
+        _IOT_THRESHOLDS,
+        ["sensor_type", "alert_min", "alert_max", "warn_min", "warn_max", "disp_min", "disp_max"],
+    )
+
+    return (
+        latest.join(thresh, "sensor_type", "left")
+        .withColumn(
+            "status",
+            F.when(
+                (F.col("value") < F.col("alert_min")) | (F.col("value") > F.col("alert_max")),
+                "ALERT",
+            ).when(
+                (F.col("value") < F.col("warn_min")) | (F.col("value") > F.col("warn_max")),
+                "CAUTION",
+            ).otherwise("NOMINAL"),
+        )
+    )
+
+
 # ---------------- SAP 3-way invoice match ----------------
 
 

@@ -210,6 +210,23 @@ CREATE TABLE IF NOT EXISTS liveoltp.agent_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_runs_ts ON liveoltp.agent_runs (started_ts DESC);
 
+-- IoT sensor latest (synced from gd_iot_sensor_latest via lakebase_sync)
+CREATE TABLE IF NOT EXISTS liveoltp.iot_sensor_latest (
+  room_id       TEXT             NOT NULL,
+  sensor_type   TEXT             NOT NULL,
+  value         DOUBLE PRECISION,
+  unit          TEXT,
+  alert_min     DOUBLE PRECISION,
+  alert_max     DOUBLE PRECISION,
+  warn_min      DOUBLE PRECISION,
+  warn_max      DOUBLE PRECISION,
+  disp_min      DOUBLE PRECISION,
+  disp_max      DOUBLE PRECISION,
+  status        TEXT,
+  event_ts      TIMESTAMPTZ,
+  PRIMARY KEY (room_id, sensor_type)
+);
+
 -- SAP PO lines (synced from gd_sap_open_po_lines via lakebase_sync)
 CREATE TABLE IF NOT EXISTS liveoltp.sap_po_lines (
   po_number          TEXT        NOT NULL,

@@ -166,6 +166,21 @@ export type AgentRun = {
   error_msg: string | null;
 };
 
+export type IotSensorRow = {
+  room_id: string;
+  sensor_type: string;
+  value: number | null;
+  unit: string | null;
+  alert_min: number | null;
+  alert_max: number | null;
+  warn_min: number | null;
+  warn_max: number | null;
+  disp_min: number | null;
+  disp_max: number | null;
+  status: "NOMINAL" | "CAUTION" | "ALERT" | null;
+  event_ts: string | null;
+};
+
 export type SapPoLine = {
   po_number: string;
   po_item: number;
@@ -248,6 +263,7 @@ export const api = {
       `/api/agents/invoices${status ? `?status=${status}` : ""}`,
     ),
   runs: (limit = 25) => getJSON<AgentRun[]>(`/api/agents/runs?limit=${limit}`),
+  iotSensors: () => getJSON<IotSensorRow[]>("/api/iot/sensors"),
   sapPoLines: (status?: string, limit = 100) =>
     getJSON<SapPoLine[]>(`/api/sap/po-lines?limit=${limit}${status ? `&status=${status}` : ""}`),
   sapInvoiceMatching: (matchStatus?: string, limit = 100) =>

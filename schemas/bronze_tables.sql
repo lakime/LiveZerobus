@@ -198,6 +198,22 @@ TBLPROPERTIES (
   'delta.appendOnly' = 'true'
 );
 
+-- --------------------------------------------------------------------
+-- 8. IoT sensor readings (grow-room environmental monitoring)
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.bz_iot_sensor_events (
+  event_id    STRING    NOT NULL,
+  event_ts    TIMESTAMP NOT NULL,
+  room_id     STRING    NOT NULL,   -- GR-01 … GR-06
+  sensor_type STRING    NOT NULL,   -- temperature|humidity|soil_moisture|light|co2|ph|ec
+  value       DOUBLE    NOT NULL,
+  unit        STRING    NOT NULL
+)
+USING DELTA
+TBLPROPERTIES (
+  'delta.appendOnly' = 'true'
+);
+
 -- Grants for the app service principal
 GRANT USE CATALOG ON CATALOG ${catalog} TO `${service_principal}`;
 GRANT USE SCHEMA, SELECT

@@ -58,6 +58,12 @@ tables:
     scheduling_policy: SNAPSHOT
     snapshot_interval_seconds: 30
 
+  - source: ${catalog}.${schema}.gd_iot_sensor_latest
+    target: iot_sensor_latest
+    primary_keys: [room_id, sensor_type]
+    scheduling_policy: SNAPSHOT
+    snapshot_interval_seconds: 15
+
   - source: ${catalog}.${schema}.gd_sap_open_po_lines
     target: sap_po_lines
     primary_keys: [po_number, po_item]

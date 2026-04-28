@@ -13,10 +13,11 @@ import OnboardingPanel from "./components/OnboardingPanel";
 import InvoicesPanel from "./components/InvoicesPanel";
 import AgentRunsPanel from "./components/AgentRunsPanel";
 import SapPanel from "./components/SapPanel";
+import IotFieldsPanel from "./components/IotFieldsPanel";
 
 const REFRESH_MS = 3000;
 
-type Tab = "dashboard" | "emails" | "po" | "onboarding" | "invoices" | "runs" | "sap";
+type Tab = "dashboard" | "emails" | "po" | "onboarding" | "invoices" | "runs" | "sap" | "iot";
 
 export default function App() {
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -65,6 +66,7 @@ export default function App() {
         <Tab id="invoices"   on={tab} onSet={setTab}>Invoices</Tab>
         <Tab id="runs"       on={tab} onSet={setTab}>Agent runs</Tab>
         <Tab id="sap"        on={tab} onSet={setTab}>SAP P2P</Tab>
+        <Tab id="iot"        on={tab} onSet={setTab}>IoT Fields</Tab>
       </nav>
 
       {tab === "dashboard" && (
@@ -137,6 +139,12 @@ export default function App() {
         <section className="card tall">
           <h2>SAP Procure-to-Pay</h2>
           <SapPanel tick={tick} />
+        </section>
+      )}
+
+      {tab === "iot" && (
+        <section style={{ padding: "0 0 24px" }}>
+          <IotFieldsPanel tick={tick} />
         </section>
       )}
 

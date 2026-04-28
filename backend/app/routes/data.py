@@ -9,6 +9,7 @@ from ..models import (
     CommodityRow,
     DemandHourRow,
     InventoryRow,
+    IotSensorRow,
     RecommendationRow,
     SapInvoiceMatchRow,
     SapPoLineRow,
@@ -127,6 +128,20 @@ def recommendations(
          ORDER BY created_ts DESC
          LIMIT %s
     """, params)
+
+
+# -------------------- IoT sensor latest --------------------
+
+
+@router.get("/iot/sensors", response_model=list[IotSensorRow])
+def iot_sensors(settings: Settings = Depends(get_settings)):
+    return query(settings, """
+        SELECT room_id, sensor_type, value, unit,
+               alert_min, alert_max, warn_min, warn_max, disp_min, disp_max,
+               status, event_ts
+          FROM liveoltp.iot_sensor_latest
+         ORDER BY room_id, sensor_type
+    """)
 
 
 # -------------------- SAP PO lines --------------------
