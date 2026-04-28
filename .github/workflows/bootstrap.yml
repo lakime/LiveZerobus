@@ -70,6 +70,8 @@ jobs:
           echo "Will run DDL against warehouse_id=${WAREHOUSE_ID}"
 
       - name: Run setup_unity_catalog.py
+        env:
+          DATABRICKS_WAREHOUSE_ID: ${{ env.WAREHOUSE_ID }}
         run: python scripts/setup_unity_catalog.py
 
       # Optional: also display a summary of what now exists
