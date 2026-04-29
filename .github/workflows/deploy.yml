@@ -136,6 +136,19 @@ jobs:
         run: |
           timeout 25s databricks apps logs "${APP_NAME}" || true
 
+      - name: Apply Lakebase synced tables
+        # Creates any missing Gold→Postgres synced tables using the SP's credentials.
+        # apply.py is idempotent: "already exists" rows are silently skipped.
+        run: |
+          pip install --quiet pyyaml databricks-sdk
+          python lakebase_sync/apply.py \
+            --catalog livezerobus \
+            --schema procurement \
+            --lakebase-instance myzerobus \
+            --lakebase-branch production
+        env:
+          PGDATABASE: databricks_postgres
+
       - name: Trigger Lakeflow pipeline (manual dispatch only)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_pipeline_after_deploy }}
         env:
