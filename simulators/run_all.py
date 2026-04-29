@@ -1,9 +1,10 @@
-"""Run all 4 simulators in parallel threads. Intended for demo use.
+"""Run all simulators in parallel threads. Intended for demo use.
 
 Usage:
+    python run_all.py                                      # uses config.toml defaults
     python run_all.py --catalog livezerobus --schema procurement --rate 20
 
-`--rate` is a global knob: individual simulators scale from it.
+`--rate` is a global multiplier applied on top of per-simulator rates in config.toml.
 """
 from __future__ import annotations
 
@@ -16,6 +17,8 @@ from typing import List
 
 import click
 
+import config as cfg
+
 
 def _run(cmd: List[str], name: str) -> None:
     print(f"→ starting {name}: {' '.join(cmd)}")
@@ -25,21 +28,35 @@ def _run(cmd: List[str], name: str) -> None:
 
 
 @click.command()
-@click.option("--catalog", default="livezerobus")
-@click.option("--schema", default="procurement")
-@click.option("--rate", default=20, help="Global rate scaler.")
+@click.option("--catalog", default=None, help="UC catalog (default: config.toml)")
+@click.option("--schema",  default=None, help="UC schema (default: config.toml)")
+@click.option("--rate",    default=None, type=int, help="Global rate multiplier (overrides per-sim rates).")
 @click.option("--duration", default=0)
-def main(catalog: str, schema: str, rate: int, duration: int) -> None:
-    scale = max(rate // 5, 1)
+def main(catalog: str | None, schema: str | None, rate: int | None, duration: int) -> None:
+    resolved_catalog = catalog or cfg.catalog()
+    resolved_schema  = schema  or cfg.schema()
 
-    specs = [
-        ("inventory",  ["python", "inventory_simulator.py",        f"--rate={2 * scale}"]),
-        ("suppliers",  ["python", "supplier_quotes_simulator.py",  f"--rate={1 * scale}"]),
-        ("demand",     ["python", "demand_simulator.py",           f"--rate={3 * scale}"]),
-        ("commodity",  ["python", "commodity_simulator.py",        f"--rate={1}"]),
-    ]
+    if rate is not None:
+        scale = max(rate // 5, 1)
+        specs = [
+            ("inventory",  ["python", "inventory_simulator.py",        f"--rate={2 * scale}"]),
+            ("suppliers",  ["python", "supplier_quotes_simulator.py",  f"--rate={1 * scale}"]),
+            ("demand",     ["python", "demand_simulator.py",           f"--rate={3 * scale}"]),
+            ("commodity",  ["python", "commodity_simulator.py",        f"--rate={1}"]),
+            ("sap",        ["python", "sap_simulator.py",              f"--rate={1}"]),
+            ("iot",        ["python", "iot_simulator.py",              f"--rate={1}"]),
+        ]
+    else:
+        specs = [
+            ("inventory",  ["python", "inventory_simulator.py",       f"--rate={cfg.sim_rate('inventory')}"]),
+            ("suppliers",  ["python", "supplier_quotes_simulator.py", f"--rate={cfg.sim_rate('suppliers')}"]),
+            ("demand",     ["python", "demand_simulator.py",          f"--rate={cfg.sim_rate('demand')}"]),
+            ("commodity",  ["python", "commodity_simulator.py",       f"--rate={cfg.sim_rate('commodity')}"]),
+            ("sap",        ["python", "sap_simulator.py",             f"--rate={cfg.sim_rate('sap')}"]),
+            ("iot",        ["python", "iot_simulator.py",             f"--rate={cfg.sim_rate('iot')}"]),
+        ]
 
-    common_args = [f"--catalog={catalog}", f"--schema={schema}"]
+    common_args = [f"--catalog={resolved_catalog}", f"--schema={resolved_schema}"]
     if duration:
         common_args.append(f"--duration={duration}")
 

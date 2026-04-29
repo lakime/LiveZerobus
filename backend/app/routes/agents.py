@@ -53,14 +53,14 @@ def email_threads(
             SELECT DISTINCT ON (thread_id)
                    thread_id, created_ts AS last_ts, supplier_id,
                    supplier_email, sku, subject, intent, 'OUT' AS side
-              FROM liveoltp.email_outbox
+              FROM procurement.email_outbox
              ORDER BY thread_id, created_ts DESC
         ),
         last_in AS (
             SELECT DISTINCT ON (thread_id)
                    thread_id, received_ts AS last_ts, supplier_id,
                    supplier_email, sku, subject, intent_detected AS intent, 'IN' AS side
-              FROM liveoltp.email_inbox
+              FROM procurement.email_inbox
              ORDER BY thread_id, received_ts DESC
         ),
         unioned AS (
@@ -88,13 +88,13 @@ def email_thread(
         SELECT email_id, thread_id, created_ts AS ts, supplier_id,
                supplier_email, subject, body_md, sku, intent, sent_by,
                status, 'OUT' AS side
-          FROM liveoltp.email_outbox
+          FROM procurement.email_outbox
          WHERE thread_id = %s
         UNION ALL
         SELECT email_id, thread_id, received_ts AS ts, supplier_id,
                supplier_email, subject, body_md, sku, intent_detected AS intent,
                NULL AS sent_by, NULL AS status, 'IN' AS side
-          FROM liveoltp.email_inbox
+          FROM procurement.email_inbox
          WHERE thread_id = %s
          ORDER BY ts ASC
     """, [thread_id, thread_id])
@@ -111,11 +111,11 @@ def po_drafts(
 ) -> list[dict]:
     if status:
         return fetchall(settings,
-            "SELECT * FROM liveoltp.po_drafts WHERE status=%s "
+            "SELECT * FROM procurement.po_drafts WHERE status=%s "
             "ORDER BY created_ts DESC LIMIT %s",
             [status.upper(), limit])
     return fetchall(settings,
-        "SELECT * FROM liveoltp.po_drafts ORDER BY created_ts DESC LIMIT %s",
+        "SELECT * FROM procurement.po_drafts ORDER BY created_ts DESC LIMIT %s",
         [limit])
 
 
@@ -124,12 +124,12 @@ def budget(settings: Settings = Depends(get_settings)) -> dict:
     n = _now()
     period = f"{n.year:04d}-{n.month:02d}"
     row = fetchone(settings,
-        "SELECT balance_usd, entry_ts FROM liveoltp.budget_ledger "
+        "SELECT balance_usd, entry_ts FROM procurement.budget_ledger "
         "WHERE period_ym=%s AND category='SEED' "
         "ORDER BY entry_ts DESC LIMIT 1",
         [period])
     entries = fetchall(settings,
-        "SELECT * FROM liveoltp.budget_ledger WHERE period_ym=%s "
+        "SELECT * FROM procurement.budget_ledger WHERE period_ym=%s "
         "ORDER BY entry_ts DESC LIMIT 20", [period])
     return {
         "period_ym": period,
@@ -149,11 +149,11 @@ def applications(
 ) -> list[dict]:
     if status:
         return fetchall(settings,
-            "SELECT * FROM liveoltp.supplier_applications WHERE status=%s "
+            "SELECT * FROM procurement.supplier_applications WHERE status=%s "
             "ORDER BY submitted_ts DESC",
             [status.upper()])
     return fetchall(settings,
-        "SELECT * FROM liveoltp.supplier_applications "
+        "SELECT * FROM procurement.supplier_applications "
         "ORDER BY submitted_ts DESC LIMIT 50")
 
 
@@ -169,7 +169,7 @@ def submit_application(
         raise HTTPException(400, f"missing fields: {missing}")
     app_id = _new_id("APP")
     execute(settings, """
-        INSERT INTO liveoltp.supplier_applications
+        INSERT INTO procurement.supplier_applications
           (application_id, submitted_ts, supplier_name, contact_email,
            country, offered_skus, organic_cert, years_in_biz, status,
            score, agent_notes)
@@ -191,11 +191,11 @@ def invoices(
 ) -> list[dict]:
     if status:
         return fetchall(settings,
-            "SELECT * FROM liveoltp.invoice_reconciliations WHERE status=%s "
+            "SELECT * FROM procurement.invoice_reconciliations WHERE status=%s "
             "ORDER BY received_ts DESC LIMIT 100",
             [status.upper()])
     return fetchall(settings,
-        "SELECT * FROM liveoltp.invoice_reconciliations "
+        "SELECT * FROM procurement.invoice_reconciliations "
         "ORDER BY received_ts DESC LIMIT 100")
 
 
@@ -205,7 +205,7 @@ def agent_runs(
     settings: Settings = Depends(get_settings),
 ) -> list[dict]:
     return fetchall(settings,
-        "SELECT * FROM liveoltp.agent_runs ORDER BY started_ts DESC LIMIT %s",
+        "SELECT * FROM procurement.agent_runs ORDER BY started_ts DESC LIMIT %s",
         [limit])
 
 
@@ -253,7 +253,7 @@ def simulate_invoice(
     """Generate a synthetic invoice for an APPROVED PO.
 
     If `po_id` is omitted, picks the oldest APPROVED PO without an invoice.
-    The resulting row sits in `liveoltp.invoice_reconciliations` with
+    The resulting row sits in `procurement.invoice_reconciliations` with
     status='NEW' until the reconciler agent processes it.
     """
     return simulate_invoice_for_po(settings, po_id)

@@ -31,9 +31,13 @@ echo "==> Workspace path:  ${WORKSPACE_PATH}"
 echo "==> Building frontend"
 "${ROOT}/scripts/build_frontend.sh"
 
-# 2. Push backend/ (contains app.yaml, requirements.txt, app/, static/) to the workspace
+# 2. Push backend/ (app.yaml, requirements.txt, app/) to the workspace.
+#    static/ is in .gitignore so `databricks sync` skips it — upload it separately.
 echo "==> Syncing backend/ → ${WORKSPACE_PATH}"
 databricks sync --full "${ROOT}/backend" "${WORKSPACE_PATH}"
+
+echo "==> Uploading backend/static → ${WORKSPACE_PATH}/static"
+databricks workspace import-dir --overwrite "${ROOT}/backend/static" "${WORKSPACE_PATH}/static"
 
 # 3. Tell the existing App to (re)deploy from that path
 echo "==> Deploying ${APP_NAME}"

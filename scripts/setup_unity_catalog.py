@@ -43,7 +43,7 @@ def main() -> int:
     catalog = os.environ.get("UC_CATALOG", "livezerobus")
     schema = os.environ.get("UC_SCHEMA", "procurement")
     warehouse_id = os.environ["DATABRICKS_WAREHOUSE_ID"]
-    service_principal = os.environ.get("SERVICE_PRINCIPAL", "app-3dxwqo")
+    service_principal = os.environ.get("SERVICE_PRINCIPAL", "app-3dxwqo livezerobus")
 
     params = {
         "catalog": catalog,

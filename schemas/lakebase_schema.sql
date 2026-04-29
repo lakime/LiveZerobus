@@ -18,7 +18,7 @@
 -- Run this file once against databricks_postgres/production in the Lakebase
 -- SQL editor after creating the Lakebase instance.
 
-CREATE SCHEMA IF NOT EXISTS liveoltp;
+CREATE SCHEMA IF NOT EXISTS procurement;
 
 
 -- =================== Seed inventory / planting / market ===================
@@ -27,7 +27,7 @@ CREATE SCHEMA IF NOT EXISTS liveoltp;
 -- synced table materialises the full superset of Gold columns; reference
 -- DDL below is for documentation only — Synced Tables manage their own
 -- target schema at apply time.
-CREATE TABLE IF NOT EXISTS liveoltp.inventory_snapshot (
+CREATE TABLE IF NOT EXISTS procurement.inventory_snapshot (
   sku               TEXT NOT NULL,
   room_id           TEXT NOT NULL,
   on_hand_g         DOUBLE PRECISION NOT NULL,
@@ -41,10 +41,10 @@ CREATE TABLE IF NOT EXISTS liveoltp.inventory_snapshot (
   PRIMARY KEY (sku, room_id)
 );
 CREATE INDEX IF NOT EXISTS idx_inventory_snapshot_ts
-  ON liveoltp.inventory_snapshot (last_event_ts DESC);
+  ON procurement.inventory_snapshot (last_event_ts DESC);
 
 -- Current best N quotes per SKU, ranked by the ML model.
-CREATE TABLE IF NOT EXISTS liveoltp.supplier_leaderboard (
+CREATE TABLE IF NOT EXISTS procurement.supplier_leaderboard (
   sku             TEXT NOT NULL,
   supplier_id     TEXT NOT NULL,
   supplier_name   TEXT,
@@ -60,10 +60,10 @@ CREATE TABLE IF NOT EXISTS liveoltp.supplier_leaderboard (
   PRIMARY KEY (sku, supplier_id)
 );
 CREATE INDEX IF NOT EXISTS idx_leaderboard_sku_rank
-  ON liveoltp.supplier_leaderboard (sku, rank);
+  ON procurement.supplier_leaderboard (sku, rank);
 
 -- Latest input price per grow-input (coco_coir, nutrient_pack, kwh, ...).
-CREATE TABLE IF NOT EXISTS liveoltp.commodity_prices_latest (
+CREATE TABLE IF NOT EXISTS procurement.commodity_prices_latest (
   input_key   TEXT PRIMARY KEY,
   price_usd   DOUBLE PRECISION,
   unit        TEXT,
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS liveoltp.commodity_prices_latest (
 );
 
 -- 1-hour planting aggregates (grams seeded per SKU per hour).
-CREATE TABLE IF NOT EXISTS liveoltp.demand_1h (
+CREATE TABLE IF NOT EXISTS procurement.demand_1h (
   sku         TEXT NOT NULL,
   hour_ts     TIMESTAMPTZ NOT NULL,
   trays       INT NOT NULL,
@@ -81,10 +81,10 @@ CREATE TABLE IF NOT EXISTS liveoltp.demand_1h (
   PRIMARY KEY (sku, hour_ts)
 );
 CREATE INDEX IF NOT EXISTS idx_demand_1h_hour
-  ON liveoltp.demand_1h (hour_ts DESC);
+  ON procurement.demand_1h (hour_ts DESC);
 
 -- Final procurement recommendations (scored & ranked).
-CREATE TABLE IF NOT EXISTS liveoltp.procurement_recommendations (
+CREATE TABLE IF NOT EXISTS procurement.procurement_recommendations (
   recommendation_id TEXT PRIMARY KEY,
   created_ts        TIMESTAMPTZ NOT NULL,
   sku               TEXT NOT NULL,
@@ -103,14 +103,14 @@ CREATE TABLE IF NOT EXISTS liveoltp.procurement_recommendations (
   rationale         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_recs_ts
-  ON liveoltp.procurement_recommendations (created_ts DESC);
+  ON procurement.procurement_recommendations (created_ts DESC);
 CREATE INDEX IF NOT EXISTS idx_recs_sku
-  ON liveoltp.procurement_recommendations (sku);
+  ON procurement.procurement_recommendations (sku);
 
 
 -- =================== Agent state (email + PO + budget + ops) ===================
 
-CREATE TABLE IF NOT EXISTS liveoltp.email_outbox (
+CREATE TABLE IF NOT EXISTS procurement.email_outbox (
   email_id        TEXT PRIMARY KEY,
   thread_id       TEXT NOT NULL,
   created_ts      TIMESTAMPTZ NOT NULL,
@@ -123,9 +123,9 @@ CREATE TABLE IF NOT EXISTS liveoltp.email_outbox (
   sent_by         TEXT,       -- agent name
   status          TEXT        -- DRAFT | SENT | BOUNCED
 );
-CREATE INDEX IF NOT EXISTS idx_outbox_thread ON liveoltp.email_outbox (thread_id, created_ts);
+CREATE INDEX IF NOT EXISTS idx_outbox_thread ON procurement.email_outbox (thread_id, created_ts);
 
-CREATE TABLE IF NOT EXISTS liveoltp.email_inbox (
+CREATE TABLE IF NOT EXISTS procurement.email_inbox (
   email_id        TEXT PRIMARY KEY,
   thread_id       TEXT NOT NULL,
   received_ts     TIMESTAMPTZ NOT NULL,
@@ -138,9 +138,9 @@ CREATE TABLE IF NOT EXISTS liveoltp.email_inbox (
   extracted_json  TEXT,
   processed       BOOLEAN
 );
-CREATE INDEX IF NOT EXISTS idx_inbox_thread ON liveoltp.email_inbox (thread_id, received_ts);
+CREATE INDEX IF NOT EXISTS idx_inbox_thread ON procurement.email_inbox (thread_id, received_ts);
 
-CREATE TABLE IF NOT EXISTS liveoltp.po_drafts (
+CREATE TABLE IF NOT EXISTS procurement.po_drafts (
   po_id           TEXT PRIMARY KEY,
   created_ts      TIMESTAMPTZ NOT NULL,
   thread_id       TEXT,
@@ -155,9 +155,9 @@ CREATE TABLE IF NOT EXISTS liveoltp.po_drafts (
   status          TEXT,       -- DRAFT | APPROVED | REJECTED | SENT | RECEIVED
   rationale       TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_po_status ON liveoltp.po_drafts (status, created_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_po_status ON procurement.po_drafts (status, created_ts DESC);
 
-CREATE TABLE IF NOT EXISTS liveoltp.budget_ledger (
+CREATE TABLE IF NOT EXISTS procurement.budget_ledger (
   ledger_id       TEXT PRIMARY KEY,
   entry_ts        TIMESTAMPTZ NOT NULL,
   period_ym       TEXT,
@@ -167,9 +167,9 @@ CREATE TABLE IF NOT EXISTS liveoltp.budget_ledger (
   po_id           TEXT,
   note            TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_budget_period ON liveoltp.budget_ledger (period_ym, entry_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_budget_period ON procurement.budget_ledger (period_ym, entry_ts DESC);
 
-CREATE TABLE IF NOT EXISTS liveoltp.supplier_applications (
+CREATE TABLE IF NOT EXISTS procurement.supplier_applications (
   application_id  TEXT PRIMARY KEY,
   submitted_ts    TIMESTAMPTZ NOT NULL,
   supplier_name   TEXT,
@@ -183,7 +183,7 @@ CREATE TABLE IF NOT EXISTS liveoltp.supplier_applications (
   agent_notes     TEXT
 );
 
-CREATE TABLE IF NOT EXISTS liveoltp.invoice_reconciliations (
+CREATE TABLE IF NOT EXISTS procurement.invoice_reconciliations (
   reconciliation_id TEXT PRIMARY KEY,
   received_ts       TIMESTAMPTZ NOT NULL,
   po_id             TEXT,
@@ -196,7 +196,7 @@ CREATE TABLE IF NOT EXISTS liveoltp.invoice_reconciliations (
   agent_notes         TEXT
 );
 
-CREATE TABLE IF NOT EXISTS liveoltp.agent_runs (
+CREATE TABLE IF NOT EXISTS procurement.agent_runs (
   run_id        TEXT PRIMARY KEY,
   started_ts    TIMESTAMPTZ NOT NULL,
   finished_ts   TIMESTAMPTZ,
@@ -208,4 +208,57 @@ CREATE TABLE IF NOT EXISTS liveoltp.agent_runs (
   status        TEXT,
   error_msg     TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_agent_runs_ts ON liveoltp.agent_runs (started_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_ts ON procurement.agent_runs (started_ts DESC);
+
+-- IoT sensor latest (synced from gd_iot_sensor_latest via lakebase_sync)
+CREATE TABLE IF NOT EXISTS procurement.iot_sensor_latest (
+  room_id       TEXT             NOT NULL,
+  sensor_type   TEXT             NOT NULL,
+  value         DOUBLE PRECISION,
+  unit          TEXT,
+  alert_min     DOUBLE PRECISION,
+  alert_max     DOUBLE PRECISION,
+  warn_min      DOUBLE PRECISION,
+  warn_max      DOUBLE PRECISION,
+  disp_min      DOUBLE PRECISION,
+  disp_max      DOUBLE PRECISION,
+  status        TEXT,
+  event_ts      TIMESTAMPTZ,
+  PRIMARY KEY (room_id, sensor_type)
+);
+
+-- SAP PO lines (synced from gd_sap_open_po_lines via lakebase_sync)
+CREATE TABLE IF NOT EXISTS procurement.sap_po_lines (
+  po_number          TEXT        NOT NULL,
+  po_item            INT         NOT NULL,
+  event_type         TEXT,
+  supplier_id        TEXT,
+  supplier_name      TEXT,
+  supplier_tier      TEXT,
+  sku                TEXT,
+  quantity_g         DOUBLE PRECISION,
+  unit_price_usd     DOUBLE PRECISION,
+  net_value_usd      DOUBLE PRECISION,
+  delivery_date_ts   TIMESTAMPTZ,
+  qty_received_g     DOUBLE PRECISION,
+  qty_outstanding_g  DOUBLE PRECISION,
+  po_status          TEXT,
+  event_ts           TIMESTAMPTZ,
+  PRIMARY KEY (po_number, po_item)
+);
+
+-- SAP 3-way invoice match (synced from gd_sap_invoice_matching via lakebase_sync)
+CREATE TABLE IF NOT EXISTS procurement.sap_invoice_matching (
+  invoice_doc_number TEXT        PRIMARY KEY,
+  po_number          TEXT,
+  po_item            INT,
+  supplier_id        TEXT,
+  sku                TEXT,
+  net_amount_usd     DOUBLE PRECISION,
+  po_net_value_usd   DOUBLE PRECISION,
+  gr_qty_g           DOUBLE PRECISION,
+  variance_usd       DOUBLE PRECISION,
+  status             TEXT,
+  match_status       TEXT,
+  event_ts           TIMESTAMPTZ
+);

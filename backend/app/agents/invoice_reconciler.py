@@ -1,6 +1,6 @@
 """Invoice-reconciliation agent.
 
-Given open reconciliation rows in `liveoltp.invoice_reconciliations` (status='NEW'),
+Given open reconciliation rows in `procurement.invoice_reconciliations` (status='NEW'),
 compute variance vs. the approved PO and flip the status:
   variance_pct <= 1.0%  → OK
   1.0% < variance_pct <= 5.0%  → REVIEW
@@ -43,10 +43,10 @@ def _pick_approved_po_without_invoice(settings: Settings) -> dict | None:
     return db.fetchone(
         settings,
         """SELECT p.po_id, p.supplier_id, p.total_cost_usd
-             FROM liveoltp.po_drafts p
+             FROM procurement.po_drafts p
             WHERE p.status = 'APPROVED'
               AND NOT EXISTS (
-                    SELECT 1 FROM liveoltp.invoice_reconciliations r
+                    SELECT 1 FROM procurement.invoice_reconciliations r
                      WHERE r.po_id = p.po_id
                   )
             ORDER BY p.created_ts ASC
@@ -79,7 +79,7 @@ def simulate_invoice_for_po(
         po = db.fetchone(
             settings,
             """SELECT po_id, supplier_id, total_cost_usd
-                 FROM liveoltp.po_drafts
+                 FROM procurement.po_drafts
                 WHERE po_id = %s AND status = 'APPROVED'""",
             [po_id],
         )
@@ -88,7 +88,7 @@ def simulate_invoice_for_po(
         # Refuse to double-invoice
         existing = db.fetchone(
             settings,
-            "SELECT 1 FROM liveoltp.invoice_reconciliations WHERE po_id=%s LIMIT 1",
+            "SELECT 1 FROM procurement.invoice_reconciliations WHERE po_id=%s LIMIT 1",
             [po_id],
         )
         if existing:
@@ -105,7 +105,7 @@ def simulate_invoice_for_po(
     rec_id = _new_id("REC")
     db.execute(
         settings,
-        """INSERT INTO liveoltp.invoice_reconciliations
+        """INSERT INTO procurement.invoice_reconciliations
              (reconciliation_id, received_ts, po_id, supplier_id,
               invoiced_amount_usd, expected_amount_usd,
               variance_usd, variance_pct, status, agent_notes)
@@ -124,14 +124,14 @@ def simulate_invoice_for_po(
 def run_reconciler(settings: Settings) -> dict:
     rows = db.fetchall(
         settings,
-        """SELECT * FROM liveoltp.invoice_reconciliations
+        """SELECT * FROM procurement.invoice_reconciliations
             WHERE status='NEW' ORDER BY received_ts ASC LIMIT 50""",
     )
     updated: list[dict] = []
     for r in rows:
         po = db.fetchone(
             settings,
-            "SELECT total_cost_usd FROM liveoltp.po_drafts WHERE po_id=%s",
+            "SELECT total_cost_usd FROM procurement.po_drafts WHERE po_id=%s",
             [r["po_id"]],
         )
         expected = float(po["total_cost_usd"]) if po and po.get("total_cost_usd") is not None else None
@@ -156,7 +156,7 @@ def run_reconciler(settings: Settings) -> dict:
 
         db.execute(
             settings,
-            """UPDATE liveoltp.invoice_reconciliations
+            """UPDATE procurement.invoice_reconciliations
                   SET expected_amount_usd=%s,
                       variance_usd=%s, variance_pct=%s,
                       status=%s, agent_notes=%s
@@ -165,7 +165,7 @@ def run_reconciler(settings: Settings) -> dict:
         )
         db.execute(
             settings,
-            """INSERT INTO liveoltp.agent_runs
+            """INSERT INTO procurement.agent_runs
                  (run_id, started_ts, finished_ts, agent_name, input_ref,
                   output_ref, prompt_tokens, output_tokens, status, error_msg)
                VALUES (%s,%s,%s,'invoice_reconciler',%s,%s,0,0,'OK',NULL)""",

@@ -1,0 +1,26 @@
+# LiveZerobus simulator configuration
+# CLI flags (--catalog, --schema, --rate) override these values at runtime.
+
+[databricks]
+catalog = "livezerobus"
+schema  = "procurement"
+
+# Per-simulator event rates (events/second).
+# run_all.py also accepts --rate as a global multiplier on top of these.
+[simulators.inventory]
+rate = 5
+
+[simulators.suppliers]
+rate = 2
+
+[simulators.demand]
+rate = 8
+
+[simulators.commodity]
+rate = 1
+
+[simulators.sap]
+rate = 1
+
+[simulators.iot]
+rate = 1

@@ -184,6 +184,72 @@ class CommodityPrice:
     source: str
 
 
+@dataclasses.dataclass
+class SapPurchaseOrder:
+    event_id: str
+    event_ts: datetime
+    po_number: str
+    po_item: int
+    event_type: str        # CREATED | APPROVED | CHANGED | CANCELLED
+    supplier_id: str
+    sku: str
+    quantity_g: float
+    unit_price_usd: float
+    net_value_usd: float
+    currency: str
+    delivery_date_ts: datetime
+    plant: str
+    company_code: str
+    purchase_org: str
+
+
+@dataclasses.dataclass
+class SapGoodsReceipt:
+    event_id: str
+    event_ts: datetime
+    gr_doc_number: str
+    gr_item: int
+    po_number: str
+    po_item: int
+    sku: str
+    qty_received_g: float  # negative for movement_type 122 (reversal)
+    room_id: str
+    movement_type: str     # 101=GR vs PO, 122=reversal
+    batch_id: str
+    posting_date_ts: datetime
+    delivery_note: str
+
+
+@dataclasses.dataclass
+class IotSensorEvent:
+    event_id: str
+    event_ts: datetime
+    room_id: str
+    sensor_type: str
+    value: float
+    unit: str
+
+
+@dataclasses.dataclass
+class SapInvoiceDocument:
+    event_id: str
+    event_ts: datetime
+    invoice_doc_number: str
+    po_number: str
+    po_item: int
+    supplier_id: str
+    invoice_date_ts: datetime
+    posting_date_ts: datetime
+    quantity_invoiced_g: float
+    unit_price_usd: float
+    net_amount_usd: float
+    tax_amount_usd: float
+    currency: str
+    payment_terms: str
+    status: str            # POSTED | PARKED | BLOCKED | CLEARED
+    variance_usd: float
+
+
 def as_row(obj: Any) -> dict[str, Any]:
     """Dataclass → JSON-safe dict for Zerobus RecordType.JSON.
 

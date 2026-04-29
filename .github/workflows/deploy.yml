@@ -100,6 +100,31 @@ jobs:
             ./backend \
             "${{ steps.ws.outputs.path }}"
 
+      - name: Upload backend/static → workspace
+        # databricks sync respects .gitignore which excludes backend/static/.
+        # Use import-dir to force-upload the React bundle that build_frontend.sh staged.
+        run: |
+          databricks workspace import-dir --overwrite \
+            ./backend/static \
+            "${{ steps.ws.outputs.path }}/static"
+
+      - name: Ensure app compute is running
+        run: |
+          STATE=$(databricks apps get "${APP_NAME}" --output json \
+            | python3 -c 'import sys,json;print(json.load(sys.stdin)["compute_status"]["state"])')
+          echo "Current compute state: ${STATE}"
+          if [[ "${STATE}" != "ACTIVE" ]]; then
+            echo "Starting app compute…"
+            databricks apps start "${APP_NAME}"
+            for i in $(seq 1 12); do
+              sleep 10
+              STATE=$(databricks apps get "${APP_NAME}" --output json \
+                | python3 -c 'import sys,json;print(json.load(sys.stdin)["compute_status"]["state"])')
+              echo "  compute state: ${STATE}"
+              [[ "${STATE}" == "ACTIVE" ]] && break
+            done
+          fi
+
       - name: Deploy Databricks App
         run: |
           databricks apps deploy "${APP_NAME}" \

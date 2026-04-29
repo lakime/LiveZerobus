@@ -3,3 +3,5 @@ databricks-zerobus-ingest-sdk>=1.1.0
 numpy>=1.26
 python-dateutil>=2.8
 click>=8.1
+fastapi>=0.110
+uvicorn[standard]>=0.29

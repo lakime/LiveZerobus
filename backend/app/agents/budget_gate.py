@@ -36,7 +36,7 @@ def _ensure_allocation(settings: Settings) -> float:
     period = _period()
     row = db.fetchone(
         settings,
-        """SELECT balance_usd FROM liveoltp.budget_ledger
+        """SELECT balance_usd FROM procurement.budget_ledger
             WHERE period_ym=%s AND category='SEED'
             ORDER BY entry_ts DESC LIMIT 1""",
         [period],
@@ -45,7 +45,7 @@ def _ensure_allocation(settings: Settings) -> float:
         return float(row["balance_usd"])
     db.execute(
         settings,
-        """INSERT INTO liveoltp.budget_ledger
+        """INSERT INTO procurement.budget_ledger
              (ledger_id, entry_ts, period_ym, category,
               delta_usd, balance_usd, po_id, note)
            VALUES (%s,%s,%s,'SEED',%s,%s,NULL,%s)""",
@@ -58,7 +58,7 @@ def _ensure_allocation(settings: Settings) -> float:
 def _current_balance(settings: Settings) -> float:
     row = db.fetchone(
         settings,
-        """SELECT balance_usd FROM liveoltp.budget_ledger
+        """SELECT balance_usd FROM procurement.budget_ledger
             WHERE period_ym=%s AND category='SEED'
             ORDER BY entry_ts DESC LIMIT 1""",
         [_period()],
@@ -73,7 +73,7 @@ def run_budget_gate(settings: Settings) -> dict:
 
     drafts = db.fetchall(
         settings,
-        "SELECT * FROM liveoltp.po_drafts WHERE status='DRAFT' ORDER BY created_ts ASC",
+        "SELECT * FROM procurement.po_drafts WHERE status='DRAFT' ORDER BY created_ts ASC",
     )
     for po in drafts:
         balance = _current_balance(settings)
@@ -82,12 +82,12 @@ def run_budget_gate(settings: Settings) -> dict:
             new_balance = balance - cost
             db.execute(
                 settings,
-                "UPDATE liveoltp.po_drafts SET status='APPROVED' WHERE po_id=%s",
+                "UPDATE procurement.po_drafts SET status='APPROVED' WHERE po_id=%s",
                 [po["po_id"]],
             )
             db.execute(
                 settings,
-                """INSERT INTO liveoltp.budget_ledger
+                """INSERT INTO procurement.budget_ledger
                      (ledger_id, entry_ts, period_ym, category,
                       delta_usd, balance_usd, po_id, note)
                    VALUES (%s,%s,%s,'SEED',%s,%s,%s,%s)""",
@@ -98,7 +98,7 @@ def run_budget_gate(settings: Settings) -> dict:
         else:
             db.execute(
                 settings,
-                "UPDATE liveoltp.po_drafts SET status='REJECTED', "
+                "UPDATE procurement.po_drafts SET status='REJECTED', "
                 "rationale = COALESCE(rationale,'') || ' | BUDGET_EXCEEDED' "
                 "WHERE po_id=%s",
                 [po["po_id"]],

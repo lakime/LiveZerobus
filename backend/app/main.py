@@ -11,7 +11,7 @@ import pathlib
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
@@ -45,16 +45,22 @@ if _FRONTEND.is_dir():
     # mount assets at /assets and keep / as SPA fallback
     app.mount("/assets", StaticFiles(directory=_FRONTEND / "assets"), name="assets")
 
+    def _no_cache_html() -> FileResponse:
+        return FileResponse(
+            _FRONTEND / "index.html",
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
+
     @app.get("/")
     def root() -> FileResponse:
-        return FileResponse(_FRONTEND / "index.html")
+        return _no_cache_html()
 
     @app.get("/{full_path:path}")
     def spa_fallback(full_path: str) -> FileResponse:
         target = _FRONTEND / full_path
         if target.is_file():
             return FileResponse(target)
-        return FileResponse(_FRONTEND / "index.html")
+        return _no_cache_html()
 else:
     @app.get("/")
     def root_fallback() -> dict:

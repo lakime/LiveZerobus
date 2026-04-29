@@ -166,6 +166,54 @@ export type AgentRun = {
   error_msg: string | null;
 };
 
+export type IotSensorRow = {
+  room_id: string;
+  sensor_type: string;
+  value: number | null;
+  unit: string | null;
+  alert_min: number | null;
+  alert_max: number | null;
+  warn_min: number | null;
+  warn_max: number | null;
+  disp_min: number | null;
+  disp_max: number | null;
+  status: "NOMINAL" | "CAUTION" | "ALERT" | null;
+  event_ts: string | null;
+};
+
+export type SapPoLine = {
+  po_number: string;
+  po_item: number;
+  event_type: string | null;
+  supplier_id: string | null;
+  supplier_name: string | null;
+  supplier_tier: string | null;
+  sku: string | null;
+  quantity_g: number | null;
+  unit_price_usd: number | null;
+  net_value_usd: number | null;
+  delivery_date_ts: string | null;
+  qty_received_g: number | null;
+  qty_outstanding_g: number | null;
+  po_status: "OPEN" | "PARTIALLY_RECEIVED" | "FULLY_RECEIVED" | "CANCELLED" | null;
+  event_ts: string | null;
+};
+
+export type SapInvoiceMatch = {
+  invoice_doc_number: string;
+  po_number: string | null;
+  po_item: number | null;
+  supplier_id: string | null;
+  sku: string | null;
+  net_amount_usd: number | null;
+  po_net_value_usd: number | null;
+  gr_qty_g: number | null;
+  variance_usd: number | null;
+  status: string | null;
+  match_status: "MATCHED" | "VARIANCE" | "PENDING_GR" | "NO_PO" | null;
+  event_ts: string | null;
+};
+
 async function getJSON<T>(url: string): Promise<T> {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`${url} → ${r.status}`);
@@ -215,6 +263,13 @@ export const api = {
       `/api/agents/invoices${status ? `?status=${status}` : ""}`,
     ),
   runs: (limit = 25) => getJSON<AgentRun[]>(`/api/agents/runs?limit=${limit}`),
+  iotSensors: () => getJSON<IotSensorRow[]>("/api/iot/sensors"),
+  sapPoLines: (status?: string, limit = 100) =>
+    getJSON<SapPoLine[]>(`/api/sap/po-lines?limit=${limit}${status ? `&status=${status}` : ""}`),
+  sapInvoiceMatching: (matchStatus?: string, limit = 100) =>
+    getJSON<SapInvoiceMatch[]>(
+      `/api/sap/invoice-matching?limit=${limit}${matchStatus ? `&match_status=${matchStatus}` : ""}`,
+    ),
   runCycle: () => postJSON<Record<string, unknown>>("/api/agents/cycle"),
   simulateReply: (threadId: string) =>
     postJSON<{ email_id?: string; intent?: string; error?: string }>(
