@@ -103,10 +103,57 @@ Simulators → Zerobus → Bronze Delta tables (bz_*)
 - Databricks workspace with: Unity Catalog, Lakebase, Foundation Model API, a Lakeflow pipeline, an App runtime
 - Service principal with MODIFY grants on Bronze tables + CAN_CONNECT_AND_CREATE on Lakebase
 - Default FM model endpoint: `databricks-meta-llama-3-3-70b-instruct` (configurable via `FM_MODEL` env var)
-- Lakebase instance name: `databricks_postgres`, branch `production`, endpoint `primary`
+- Lakebase project name: `myzerobus`, branch `production`, endpoint `primary`
+- Lakebase Postgres host: `ep-frosty-flower-e2o5hjfp.database.westeurope.azuredatabricks.net`
+- Lakebase Postgres database: `databricks_postgres`, user: service principal UUID `c4352007-a55b-4da5-b5c9-f4c8df89e58a`
+- Postgres schema for all tables (synced + native agent state): `procurement`
+
+## Lakebase API — critical notes
+
+This workspace uses the **Lakebase Autoscaling (Projects) API**, NOT the old database-instances API.
+
+**Never use** `w.database.list_database_instances()`, `w.database.create_synced_database_table()`, or `SyncedDatabaseTable` from `databricks.sdk.service.database` — these return empty / raise "Database instance is not found" because this workspace uses the newer Projects API.
+
+**Always use** `w.postgres.*` methods:
+```python
+from databricks.sdk.service import postgres as pg
+
+# List Lakebase projects
+projects = list(w.postgres.list_projects())
+names = [p.name.split("/")[-1] for p in projects]  # → ["myzerobus"]
+
+# Create a synced table (Delta Gold → Postgres)
+spec = pg.SyncedTableSyncedTableSpec(
+    source_table_full_name="livezerobus.procurement.gd_inventory_snapshot",
+    primary_key_columns=["sku", "room_id"],
+    scheduling_policy=pg.SyncedTableSyncedTableSpecSyncedTableSchedulingPolicy("SNAPSHOT"),
+    branch="projects/myzerobus/branches/production",
+    postgres_database="databricks_postgres",
+    create_database_objects_if_missing=True,
+)
+w.postgres.create_synced_table(
+    synced_table=pg.SyncedTable(spec=spec),
+    synced_table_id="livezerobus.procurement.inventory_snapshot",
+    # synced_table_id format: "{uc_catalog}.{pg_schema}.{table_name}"
+    # → creates Postgres table `inventory_snapshot` in schema `procurement`
+)
+
+# Generate OAuth token for Postgres password
+token = w.postgres.generate_database_credential(
+    name="projects/myzerobus/branches/production/endpoints/primary"
+)
+```
+
+Env var names: use `LAKEBASE_PROJECT` (or `LAKEBASE_INSTANCE` as backward-compat alias) for the project name.
+
+**Required UC permissions for the service principal** (`c4352007-a55b-4da5-b5c9-f4c8df89e58a`):
+- `USE SCHEMA, CREATE TABLE, SELECT` on `livezerobus.procurement`
+- `CAN_MANAGE` on all Lakeflow pipelines (each synced table creates its own pipeline)
+
+**Postgres schema**: all tables live in `procurement` — both synced Gold tables and native agent-state tables. `PG_SCHEMA=procurement`. Do not use `liveoltp`; that schema was replaced.
 
 ## Important conventions
 - The React build must be staged into `backend/static/` before deploying — `build_frontend.sh` handles this. Stale `.js` files alongside `.tsx` are cleaned before every build.
-- Lakebase Postgres auth uses OAuth tokens (not passwords); `lakebase.py` rotates them transparently.
+- Lakebase Postgres auth uses OAuth tokens (not passwords); `lakebase.py` rotates them transparently via `w.postgres.generate_database_credential`.
 - Agents are tick-based: each `/api/agents/<name>/tick` call runs one agent iteration; the frontend polls on a timer.
 - Unity Catalog path: `livezerobus.procurement.*` for all Delta tables.

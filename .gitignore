@@ -42,3 +42,4 @@ mlartifacts/
 # Logs & tmp
 *.log
 .tmp/
+.mcp.json

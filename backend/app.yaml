@@ -36,7 +36,7 @@ env:
   - name: PGUSER
     value: c4352007-a55b-4da5-b5c9-f4c8df89e58a
   - name: PG_SCHEMA
-    value: liveoltp
+    value: procurement
   # Lakebase Autoscaling (Projects) resource parts. The app mints a
   # short-lived Postgres OAuth token via
   #   w.postgres.generate_database_credential(

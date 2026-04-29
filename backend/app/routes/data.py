@@ -42,7 +42,7 @@ def inventory(
     return query(settings, f"""
         SELECT sku, room_id, on_hand_g, last_event_ts,
                reorder_point_g, target_stock_g
-          FROM liveoltp.inventory_snapshot
+          FROM procurement.inventory_snapshot
           {w}
          ORDER BY sku, room_id
     """, params)
@@ -66,7 +66,7 @@ def supplier_leaderboard(
         SELECT sku, supplier_id, supplier_name, pack_size_g,
                unit_price_usd, usd_per_gram, lead_time_days, min_qty,
                organic, score, rank, quote_ts
-          FROM liveoltp.supplier_leaderboard
+          FROM procurement.supplier_leaderboard
           {where}
          ORDER BY sku, rank
     """, params)
@@ -79,7 +79,7 @@ def supplier_leaderboard(
 def commodity_latest(settings: Settings = Depends(get_settings)):
     return query(settings, """
         SELECT input_key, price_usd, unit, event_ts, pct_1h, pct_24h
-          FROM liveoltp.commodity_prices_latest
+          FROM procurement.commodity_prices_latest
          ORDER BY input_key
     """)
 
@@ -100,7 +100,7 @@ def demand_hourly(
         params.append(sku)
     return query(settings, f"""
         SELECT sku, hour_ts, trays, grams_req
-          FROM liveoltp.demand_1h
+          FROM procurement.demand_1h
           {where}
          ORDER BY hour_ts ASC
     """, params)
@@ -123,7 +123,7 @@ def recommendations(
     params.append(limit)
     return query(settings, f"""
         SELECT *
-          FROM liveoltp.procurement_recommendations
+          FROM procurement.procurement_recommendations
           {where}
          ORDER BY created_ts DESC
          LIMIT %s
@@ -139,7 +139,7 @@ def iot_sensors(settings: Settings = Depends(get_settings)):
         SELECT room_id, sensor_type, value, unit,
                alert_min, alert_max, warn_min, warn_max, disp_min, disp_max,
                status, event_ts
-          FROM liveoltp.iot_sensor_latest
+          FROM procurement.iot_sensor_latest
          ORDER BY room_id, sensor_type
     """)
 
@@ -165,7 +165,7 @@ def sap_po_lines(
         SELECT po_number, po_item, event_type, supplier_id, supplier_name,
                supplier_tier, sku, quantity_g, unit_price_usd, net_value_usd,
                delivery_date_ts, qty_received_g, qty_outstanding_g, po_status, event_ts
-          FROM liveoltp.sap_po_lines
+          FROM procurement.sap_po_lines
           {w}
          ORDER BY event_ts DESC
          LIMIT %s
@@ -190,7 +190,7 @@ def sap_invoice_matching(
         SELECT invoice_doc_number, po_number, po_item, supplier_id, sku,
                net_amount_usd, po_net_value_usd, gr_qty_g, variance_usd,
                status, match_status, event_ts
-          FROM liveoltp.sap_invoice_matching
+          FROM procurement.sap_invoice_matching
           {w}
          ORDER BY event_ts DESC
          LIMIT %s
@@ -204,18 +204,18 @@ def sap_invoice_matching(
 def summary(settings: Settings = Depends(get_settings)):
     row = query(settings, """
         SELECT
-          (SELECT COUNT(*) FROM liveoltp.inventory_snapshot
+          (SELECT COUNT(*) FROM procurement.inventory_snapshot
              WHERE on_hand_g <= reorder_point_g)                    AS skus_below_reorder,
-          (SELECT COUNT(*) FROM liveoltp.procurement_recommendations
+          (SELECT COUNT(*) FROM procurement.procurement_recommendations
              WHERE decision = 'BUY_NOW'
                AND created_ts > NOW() - INTERVAL '5 minutes')        AS buy_now_last_5m,
           (SELECT COALESCE(SUM(total_cost_usd), 0)
-             FROM liveoltp.procurement_recommendations
+             FROM procurement.procurement_recommendations
              WHERE created_ts > NOW() - INTERVAL '1 hour')          AS spend_pending_1h_usd,
-          (SELECT MAX(event_ts) FROM liveoltp.commodity_prices_latest)   AS last_market_tick,
-          (SELECT COUNT(*) FROM liveoltp.po_drafts
+          (SELECT MAX(event_ts) FROM procurement.commodity_prices_latest)   AS last_market_tick,
+          (SELECT COUNT(*) FROM procurement.po_drafts
              WHERE status='DRAFT')                                   AS po_drafts_open,
-          (SELECT COUNT(*) FROM liveoltp.email_inbox
+          (SELECT COUNT(*) FROM procurement.email_inbox
              WHERE processed IS NOT TRUE)                            AS inbound_unprocessed
     """)
     return row[0] if row else {}

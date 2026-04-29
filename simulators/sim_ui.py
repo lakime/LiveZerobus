@@ -26,11 +26,18 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
+import config as cfg
+
+try:
+    from databricks.sdk import WorkspaceClient as _WC
+except ImportError:
+    _WC = None
+
 # ---------------------------------------------------------------------------
-# Simulator registry
+# Simulator registry — rates come from config.toml
 # ---------------------------------------------------------------------------
 
 SIMULATORS: dict[str, dict[str, Any]] = {
@@ -39,44 +46,47 @@ SIMULATORS: dict[str, dict[str, Any]] = {
         "label": "Inventory",
         "description": "Seed stock movements — GR / plant / adjust / expiry events per SKU and room",
         "color": "#4ea1ff",
-        "default_rate": 2,
+        "default_rate": cfg.sim_rate("inventory"),
     },
     "suppliers": {
         "script": "supplier_quotes_simulator.py",
         "label": "Supplier Quotes",
         "description": "Rolling seed-pack price quotes from 10 seed houses with organic flag and lead time",
         "color": "#21c07a",
-        "default_rate": 1,
+        "default_rate": cfg.sim_rate("suppliers"),
     },
     "demand": {
         "script": "demand_simulator.py",
         "label": "Demand",
         "description": "Planting schedule — trays seeded per zone driving grams-required downstream",
         "color": "#f2b840",
-        "default_rate": 3,
+        "default_rate": cfg.sim_rate("demand"),
     },
     "commodity": {
         "script": "commodity_simulator.py",
         "label": "Commodity Prices",
         "description": "Grow-input price feed: coco coir, peat, rockwool, nutrient packs, kWh",
         "color": "#b06bff",
-        "default_rate": 1,
+        "default_rate": cfg.sim_rate("commodity"),
     },
     "sap": {
         "script": "sap_simulator.py",
         "label": "SAP P2P",
         "description": "Procure-to-Pay cycle: PO → goods receipt → 3-way invoice match",
         "color": "#ff8c42",
-        "default_rate": 1,
+        "default_rate": cfg.sim_rate("sap"),
     },
     "iot": {
         "script": "iot_simulator.py",
         "label": "IoT Sensors",
         "description": "6 grow-room sensors: temperature, humidity, soil moisture, light, CO₂, pH, EC",
         "color": "#00d4aa",
-        "default_rate": 1,
+        "default_rate": cfg.sim_rate("iot"),
     },
 }
+
+_DEFAULT_CATALOG = cfg.catalog()
+_DEFAULT_SCHEMA  = cfg.schema()
 
 # ---------------------------------------------------------------------------
 # Process state
@@ -106,6 +116,17 @@ _sync_last_ts: float = 0.0
 _sync_last_result: str = "never"   # "success" | "error" | "never"
 _sync_next_at: float = 0.0
 _SYNC_INTERVAL = 60                # seconds between automatic syncs
+
+# ---------------------------------------------------------------------------
+# Main pipeline trigger state
+# ---------------------------------------------------------------------------
+
+_PIPELINE_ID       = "4cef05ca-ea6f-4217-af60-6b75a6b1a3f4"   # livezerobus_procurement_sdp
+_PIPELINE_INTERVAL = 600           # seconds between automatic pipeline triggers (10 min)
+_pipeline_running  = False
+_pipeline_last_ts: float  = 0.0
+_pipeline_last_result: str = "never"   # "success" | "error" | "never"
+_pipeline_next_at: float  = 0.0
 
 
 def _broadcast(msg: dict) -> None:
@@ -236,6 +257,42 @@ async def _sync_loop() -> None:
         await asyncio.sleep(_SYNC_INTERVAL)
 
 
+def _sims_active() -> bool:
+    return any(p is not None and p.poll() is None for p in _processes.values())
+
+
+async def _run_pipeline_once() -> None:
+    global _pipeline_running, _pipeline_last_ts, _pipeline_last_result
+    if _pipeline_running:
+        return
+    if not _sims_active():
+        return
+    _pipeline_running = True
+    _broadcast({"sim": "pipeline", "msg": "▶ Triggering livezerobus_procurement_sdp…", "ts": time.time()})
+    try:
+        if not _WC:
+            raise RuntimeError("databricks-sdk not installed")
+        w = _WC()
+        update = w.pipelines.start_update(pipeline_id=_PIPELINE_ID)
+        _broadcast({"sim": "pipeline", "msg": f"  ✓ Update started (id: {update.update_id})", "ts": time.time()})
+        _pipeline_last_result = "success"
+    except Exception as exc:
+        _broadcast({"sim": "pipeline", "msg": f"  ✗ Pipeline trigger failed: {exc}", "ts": time.time()})
+        _pipeline_last_result = "error"
+    finally:
+        _pipeline_last_ts = time.time()
+        _pipeline_running = False
+
+
+async def _pipeline_loop() -> None:
+    global _pipeline_next_at
+    await asyncio.sleep(20)          # startup delay (after sync)
+    while True:
+        _pipeline_next_at = time.time() + _PIPELINE_INTERVAL
+        await _run_pipeline_once()
+        await asyncio.sleep(_PIPELINE_INTERVAL)
+
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
@@ -244,13 +301,16 @@ async def _sync_loop() -> None:
 async def _lifespan(app: FastAPI):
     global _main_loop
     _main_loop = asyncio.get_running_loop()
-    task = asyncio.create_task(_sync_loop())
+    sync_task     = asyncio.create_task(_sync_loop())
+    pipeline_task = asyncio.create_task(_pipeline_loop())
     yield
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    sync_task.cancel()
+    pipeline_task.cancel()
+    for t in [sync_task, pipeline_task]:
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="SimUI", docs_url=None, redoc_url=None, lifespan=_lifespan)
@@ -277,7 +337,7 @@ def get_simulators():
 
 
 @app.post("/api/simulators/{name}/start")
-def start_sim(name: str, catalog: str = "livezerobus", schema: str = "procurement", rate: int = 0):
+def start_sim(name: str, catalog: str = _DEFAULT_CATALOG, schema: str = _DEFAULT_SCHEMA, rate: int = 0):
     if name not in SIMULATORS:
         return {"ok": False, "error": "Unknown simulator"}
     effective_rate = rate or SIMULATORS[name]["default_rate"]
@@ -292,7 +352,7 @@ def stop_sim(name: str):
 
 
 @app.post("/api/simulators/start-all")
-def start_all(catalog: str = "livezerobus", schema: str = "procurement"):
+def start_all(catalog: str = _DEFAULT_CATALOG, schema: str = _DEFAULT_SCHEMA):
     results = {}
     for name, spec in SIMULATORS.items():
         results[name] = _start(name, catalog, schema, spec["default_rate"])
@@ -357,6 +417,47 @@ def check_env():
     return {k: ("✓ set" if os.environ.get(k) else "✗ missing") for k in keys}
 
 
+@app.get("/api/config")
+def get_config():
+    return {
+        "DATABRICKS_HOST":          os.environ.get("DATABRICKS_HOST", ""),
+        "DATABRICKS_CLIENT_ID":     os.environ.get("DATABRICKS_CLIENT_ID", ""),
+        "DATABRICKS_CLIENT_SECRET": "***" if os.environ.get("DATABRICKS_CLIENT_SECRET") else "",
+        "ZEROBUS_ENDPOINT":         os.environ.get("ZEROBUS_ENDPOINT", ""),
+        "LAKEBASE_INSTANCE":        os.environ.get("LAKEBASE_INSTANCE", "databricks_postgres"),
+        "LAKEBASE_BRANCH":          os.environ.get("LAKEBASE_BRANCH", "production"),
+    }
+
+
+@app.post("/api/config")
+async def save_config(request: Request):
+    body = await request.json()
+    allowed = {
+        "DATABRICKS_HOST", "DATABRICKS_CLIENT_ID", "DATABRICKS_CLIENT_SECRET",
+        "ZEROBUS_ENDPOINT", "LAKEBASE_INSTANCE", "LAKEBASE_BRANCH",
+    }
+    values = {k: v for k, v in body.items() if k in allowed and v and v != "***"}
+    cfg.save_env_file(values)
+    for k, v in values.items():
+        os.environ[k] = v
+    return {"ok": True}
+
+
+@app.get("/api/lakebase-instances")
+def list_lakebase_instances():
+    if not _WC:
+        return {"instances": [], "error": "databricks-sdk not installed"}
+    if not os.environ.get("DATABRICKS_HOST"):
+        return {"instances": [], "error": "DATABRICKS_HOST not set"}
+    try:
+        w = _WC()
+        projects = list(w.postgres.list_projects())
+        names = [p.name.split("/")[-1] for p in projects if p.name]
+        return {"instances": sorted(names)}
+    except Exception as e:
+        return {"instances": [], "error": str(e)}
+
+
 @app.get("/api/sync-status")
 def get_sync_status():
     return {
@@ -370,6 +471,23 @@ def get_sync_status():
 @app.post("/api/sync-now")
 async def trigger_sync_now():
     asyncio.create_task(_run_sync_once())
+    return {"ok": True}
+
+
+@app.get("/api/pipeline-status")
+def get_pipeline_status():
+    return {
+        "running": _pipeline_running,
+        "last_ts": _pipeline_last_ts,
+        "last_result": _pipeline_last_result,
+        "next_in_s": max(0, int(_pipeline_next_at - time.time())) if _pipeline_next_at else None,
+        "sims_active": _sims_active(),
+    }
+
+
+@app.post("/api/pipeline-now")
+async def trigger_pipeline_now():
+    asyncio.create_task(_run_pipeline_once())
     return {"ok": True}
 
 
@@ -415,16 +533,42 @@ header h1 { font-size: 20px; letter-spacing: 0.3px; }
 .config-bar input:focus { outline: none; border-color: var(--accent); }
 .sep { width: 1px; height: 24px; background: var(--border); }
 
-.env-bar {
-  display: flex; gap: 10px; flex-wrap: wrap;
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 10px; padding: 8px 14px; margin-bottom: 20px;
-  font-size: 11px;
-}
-.env-item { display: flex; gap: 5px; align-items: center; }
-.env-item .key { color: var(--muted); }
 .env-ok  { color: var(--good); }
 .env-bad { color: var(--bad); }
+
+/* Config panel */
+.cfg-panel {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 16px 18px; margin-bottom: 20px;
+}
+.cfg-panel-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+  font-size: 12px; font-weight: 600; color: var(--text); letter-spacing: 0.3px;
+}
+.cfg-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px;
+}
+@media (max-width: 640px) { .cfg-grid { grid-template-columns: 1fr; } }
+.cfg-field { display: flex; flex-direction: column; gap: 5px; }
+.cfg-field label { font-size: 11px; color: var(--muted); letter-spacing: 0.5px; }
+.cfg-field-row { display: flex; align-items: center; gap: 6px; }
+.cfg-input {
+  flex: 1; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 7px 10px; font-size: 13px; font-family: inherit;
+}
+.cfg-input:focus { outline: none; border-color: var(--accent); }
+.cfg-input.ok  { border-color: var(--good); }
+.cfg-input.bad { border-color: var(--bad);  }
+.eye-btn {
+  background: var(--panel2); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 9px; font-size: 13px; cursor: pointer; line-height: 1;
+}
+.eye-btn:hover { color: var(--text); border-color: var(--accent); }
+.cfg-actions { display: flex; gap: 10px; margin-top: 14px; align-items: center; }
+.cfg-save-status { font-size: 12px; }
 
 .sim-grid {
   display: grid;
@@ -557,13 +701,65 @@ header h1 { font-size: 20px; letter-spacing: 0.3px; }
 </header>
 
 <div class="config-bar">
-  <label>Catalog <input id="cfg-catalog" value="livezerobus"></label>
-  <label>Schema  <input id="cfg-schema"  value="procurement"></label>
+  <label>Catalog <input id="cfg-catalog" value="{catalog}"></label>
+  <label>Schema  <input id="cfg-schema"  value="{schema}"></label>
   <div class="sep"></div>
   <span id="env-summary" style="font-size:12px;color:var(--muted)">Checking env…</span>
 </div>
 
-<div id="env-bar" class="env-bar" style="display:none"></div>
+<div id="cfg-panel" class="cfg-panel" style="display:none">
+  <div class="cfg-panel-header">
+    <span>⚙ Databricks Configuration</span>
+    <div style="display:flex;gap:8px">
+      <button class="btn" style="padding:4px 10px;font-size:11px" onclick="loadConfigPanel()">↺ Reload from env</button>
+    </div>
+  </div>
+  <div class="cfg-grid">
+    <div class="cfg-field">
+      <label>DATABRICKS_HOST</label>
+      <div class="cfg-field-row">
+        <input class="cfg-input" id="cfg-host" type="text" placeholder="https://…azuredatabricks.net">
+      </div>
+    </div>
+    <div class="cfg-field">
+      <label>ZEROBUS_ENDPOINT</label>
+      <div class="cfg-field-row">
+        <input class="cfg-input" id="cfg-zerobus" type="text" placeholder="https://….zerobus.….azuredatabricks.net">
+      </div>
+    </div>
+    <div class="cfg-field">
+      <label>DATABRICKS_CLIENT_ID</label>
+      <div class="cfg-field-row">
+        <input class="cfg-input" id="cfg-client-id" type="text" placeholder="Service principal app ID">
+      </div>
+    </div>
+    <div class="cfg-field">
+      <label>DATABRICKS_CLIENT_SECRET</label>
+      <div class="cfg-field-row">
+        <input class="cfg-input" id="cfg-secret" type="password" placeholder="Service principal secret">
+        <button class="eye-btn" id="eye-btn" onclick="toggleSecret()" title="Show/hide">👁</button>
+      </div>
+    </div>
+    <div class="cfg-field">
+      <label>LAKEBASE_INSTANCE <span id="lb-instance-status" style="font-size:10px;color:var(--muted)"></span></label>
+      <div class="cfg-field-row">
+        <input class="cfg-input" id="cfg-lb-instance" list="lb-instance-list" type="text" placeholder="databricks_postgres">
+        <datalist id="lb-instance-list"></datalist>
+        <button class="eye-btn" onclick="fetchLbInstances()" title="Refresh list">⟳</button>
+      </div>
+    </div>
+    <div class="cfg-field">
+      <label>LAKEBASE_BRANCH</label>
+      <div class="cfg-field-row">
+        <input class="cfg-input" id="cfg-lb-branch" type="text" placeholder="production">
+      </div>
+    </div>
+  </div>
+  <div class="cfg-actions">
+    <button class="btn start" style="padding:7px 18px" onclick="saveConfig()">💾 Save to .env</button>
+    <span class="cfg-save-status" id="cfg-save-status"></span>
+  </div>
+</div>
 
 <div class="sim-grid" id="sim-grid"></div>
 
@@ -571,11 +767,19 @@ header h1 { font-size: 20px; letter-spacing: 0.3px; }
 <div class="pipeline-panel">
   <div class="pipeline-header">
     <span>Data Pipeline · Lakeflow SDP</span>
-    <div style="display:flex;gap:10px;align-items:center">
-      <span class="sync-dot idle" id="sync-badge">●</span>
-      <span style="font-size:11px;color:var(--muted)" id="sync-last-info">Last sync: never</span>
-      <span style="font-size:11px;color:var(--muted)" id="sync-next-info"></span>
-      <button class="btn" style="padding:3px 10px;font-size:11px" onclick="triggerSync()">⟳ Sync now</button>
+    <div style="display:flex;gap:14px;align-items:center">
+      <span style="font-size:11px;color:var(--muted);border-right:1px solid var(--border);padding-right:14px;display:flex;gap:6px;align-items:center">
+        <span class="sync-dot idle" id="pipeline-badge">●</span>
+        <span id="pipeline-last-info">Pipeline: never</span>
+        <span id="pipeline-next-info" style="color:var(--muted)"></span>
+        <button class="btn" style="padding:3px 10px;font-size:11px" onclick="triggerPipeline()">▶ Run now</button>
+      </span>
+      <span style="font-size:11px;color:var(--muted);display:flex;gap:6px;align-items:center">
+        <span class="sync-dot idle" id="sync-badge">●</span>
+        <span id="sync-last-info">Last sync: never</span>
+        <span id="sync-next-info"></span>
+        <button class="btn" style="padding:3px 10px;font-size:11px" onclick="triggerSync()">⟳ Sync now</button>
+      </span>
     </div>
   </div>
   <div style="padding:10px 14px 16px;overflow-x:auto;text-align:center">
@@ -734,24 +938,101 @@ setInterval(() => {
   document.getElementById('clock').textContent = '● ' + new Date().toLocaleTimeString();
 }, 1000);
 
-// ── Env check ──────────────────────────────────────────────────────────────
+// ── Env check & Config panel ───────────────────────────────────────────────
 async function checkEnv() {
   const env = await fetch('/api/env').then(r => r.json());
   const ok = Object.values(env).every(v => v.startsWith('✓'));
-  document.getElementById('env-summary').textContent =
-    ok ? '✓ All env vars set' : '⚠ Some env vars missing — expand';
-  document.getElementById('env-summary').style.color = ok ? 'var(--good)' : 'var(--warn)';
-  document.getElementById('env-summary').style.cursor = 'pointer';
-  document.getElementById('env-summary').onclick = () => {
-    const bar = document.getElementById('env-bar');
-    bar.style.display = bar.style.display === 'none' ? 'flex' : 'none';
+  const summary = document.getElementById('env-summary');
+  summary.textContent = ok ? '✓ All env vars set' : '⚠ Some env vars missing — configure';
+  summary.style.color = ok ? 'var(--good)' : 'var(--warn)';
+  summary.style.cursor = 'pointer';
+  summary.onclick = () => {
+    const panel = document.getElementById('cfg-panel');
+    const showing = panel.style.display !== 'none';
+    panel.style.display = showing ? 'none' : 'block';
+    if (!showing) loadConfigPanel();
   };
-  const bar = document.getElementById('env-bar');
-  bar.innerHTML = Object.entries(env).map(([k, v]) =>
-    `<div class="env-item"><span class="key">${k}</span>
-     <span class="${v.startsWith('✓') ? 'env-ok' : 'env-bad'}">${v}</span></div>`
-  ).join('');
+  // Update field border colours if panel is open
+  const fieldMap = {
+    'DATABRICKS_HOST': 'cfg-host', 'DATABRICKS_CLIENT_ID': 'cfg-client-id',
+    'DATABRICKS_CLIENT_SECRET': 'cfg-secret', 'ZEROBUS_ENDPOINT': 'cfg-zerobus',
+  };
+  for (const [key, id] of Object.entries(fieldMap)) {
+    const el = document.getElementById(id);
+    if (el) { el.classList.toggle('ok', env[key]?.startsWith('✓')); el.classList.toggle('bad', !env[key]?.startsWith('✓')); }
+  }
 }
+
+async function loadConfigPanel() {
+  const data = await fetch('/api/config').then(r => r.json());
+  document.getElementById('cfg-host').value        = data['DATABRICKS_HOST'] || '';
+  document.getElementById('cfg-zerobus').value     = data['ZEROBUS_ENDPOINT'] || '';
+  document.getElementById('cfg-client-id').value   = data['DATABRICKS_CLIENT_ID'] || '';
+  document.getElementById('cfg-secret').value      = data['DATABRICKS_CLIENT_SECRET'] || '';
+  document.getElementById('cfg-lb-instance').value = data['LAKEBASE_INSTANCE'] || '';
+  document.getElementById('cfg-lb-branch').value   = data['LAKEBASE_BRANCH'] || '';
+  document.getElementById('cfg-save-status').textContent = '';
+  fetchLbInstances();
+}
+
+async function fetchLbInstances() {
+  const status = document.getElementById('lb-instance-status');
+  status.textContent = 'loading…';
+  try {
+    const res = await fetch('/api/lakebase-instances').then(r => r.json());
+    const dl = document.getElementById('lb-instance-list');
+    dl.innerHTML = '';
+    if (res.instances && res.instances.length) {
+      res.instances.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        dl.appendChild(opt);
+      });
+      status.textContent = `(${res.instances.length} found)`;
+      status.style.color = 'var(--good)';
+      // Auto-select if only one instance and field is empty or default
+      const inp = document.getElementById('cfg-lb-instance');
+      if (res.instances.length === 1 && (!inp.value || inp.value === 'databricks_postgres')) {
+        inp.value = res.instances[0];
+      }
+    } else {
+      status.textContent = res.error ? '(API error — type manually)' : '(none found — type manually)';
+      status.style.color = 'var(--muted)';
+    }
+  } catch {
+    document.getElementById('lb-instance-status').textContent = '(error)';
+  }
+}
+
+async function saveConfig() {
+  const body = {
+    DATABRICKS_HOST:          document.getElementById('cfg-host').value.trim(),
+    ZEROBUS_ENDPOINT:         document.getElementById('cfg-zerobus').value.trim(),
+    DATABRICKS_CLIENT_ID:     document.getElementById('cfg-client-id').value.trim(),
+    DATABRICKS_CLIENT_SECRET: document.getElementById('cfg-secret').value.trim(),
+    LAKEBASE_INSTANCE:        document.getElementById('cfg-lb-instance').value.trim(),
+    LAKEBASE_BRANCH:          document.getElementById('cfg-lb-branch').value.trim(),
+  };
+  const status = document.getElementById('cfg-save-status');
+  status.textContent = 'Saving…'; status.style.color = 'var(--muted)';
+  try {
+    const res = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(r => r.json());
+    if (res.ok) {
+      status.textContent = '✓ Saved to .env'; status.style.color = 'var(--good)';
+      await checkEnv();
+    } else {
+      status.textContent = '✗ Save failed'; status.style.color = 'var(--bad)';
+    }
+  } catch {
+    status.textContent = '✗ Error'; status.style.color = 'var(--bad)';
+  }
+}
+
+function toggleSecret() {
+  const inp = document.getElementById('cfg-secret');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+
 checkEnv();
 
 // ── Simulator grid ─────────────────────────────────────────────────────────
@@ -918,6 +1199,59 @@ function updatePipeline(sims) {
   if (mp) mp.style.opacity = anyRunning ? '1' : '0';
 }
 
+// ── Main pipeline status ───────────────────────────────────────────────────
+let _plPollTs = null;
+let _plNextIn  = null;
+
+async function pollPipelineStatus() {
+  try {
+    const s = await fetch('/api/pipeline-status').then(r => r.json());
+    _plPollTs = Date.now() / 1000;
+    _plNextIn  = s.sims_active ? s.next_in_s : null;
+    const badge = document.getElementById('pipeline-badge');
+    const info  = document.getElementById('pipeline-last-info');
+    const nextEl = document.getElementById('pipeline-next-info');
+    if (s.running) {
+      if (badge) badge.className = 'sync-dot running';
+      if (info)  { info.textContent = 'Running…'; info.style.color = 'var(--accent)'; }
+    } else if (!s.sims_active) {
+      if (badge) badge.className = 'sync-dot idle';
+      if (info)  { info.textContent = 'Paused (start sims first)'; info.style.color = 'var(--muted)'; }
+      if (nextEl) nextEl.textContent = '';
+    } else if (s.last_result === 'success') {
+      if (badge) badge.className = 'sync-dot ok';
+      if (info && s.last_ts) {
+        const ago = Math.round(Date.now()/1000 - s.last_ts);
+        info.textContent = '✔ ' + formatAgo(ago) + ' ago';
+        info.style.color = 'var(--good)';
+      }
+    } else if (s.last_result === 'error') {
+      if (badge) badge.className = 'sync-dot error';
+      if (info)  { info.textContent = '✗ trigger failed'; info.style.color = 'var(--bad)'; }
+    } else {
+      if (badge) badge.className = 'sync-dot idle';
+      if (info)  { info.textContent = 'Pipeline: never'; info.style.color = 'var(--muted)'; }
+    }
+  } catch {}
+}
+
+function updatePipelineCountdown() {
+  const el = document.getElementById('pipeline-next-info');
+  if (!el || _plNextIn === null || _plPollTs === null) return;
+  const elapsed   = Math.round(Date.now()/1000 - _plPollTs);
+  const remaining = Math.max(0, _plNextIn - elapsed);
+  el.textContent  = remaining > 0 ? 'Next: ' + formatAgo(remaining) : '';
+}
+
+async function triggerPipeline() {
+  await fetch('/api/pipeline-now', { method: 'POST' });
+  setTimeout(pollPipelineStatus, 400);
+}
+
+pollPipelineStatus();
+setInterval(pollPipelineStatus, 5000);
+setInterval(updatePipelineCountdown, 1000);
+
 // ── Lakebase sync status ───────────────────────────────────────────────────
 let _syncPollTs = null;
 let _syncNextIn = null;
@@ -1027,7 +1361,8 @@ connectSSE();
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return HTMLResponse(_HTML)
+    html = _HTML.replace("{catalog}", _DEFAULT_CATALOG).replace("{schema}", _DEFAULT_SCHEMA)
+    return HTMLResponse(html)
 
 
 # ---------------------------------------------------------------------------

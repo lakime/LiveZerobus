@@ -24,7 +24,7 @@
 
 instance: ${lakebase_instance}        # e.g. databricks_postgres
 target_branch: ${lakebase_branch}     # e.g. production
-target_schema: liveoltp
+target_schema: procurement
 
 tables:
 
