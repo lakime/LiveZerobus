@@ -39,10 +39,23 @@ ruff check backend/ simulators/ pipelines/ ml/ scripts/ lakebase_sync/
 ```
 
 ### Build + deploy to Databricks
+
+**IMPORTANT — always deploy via GitHub Actions, never via `scripts/deploy_app.sh` directly.**
+
+The Databricks App `livezerobus` is owned by the service principal `c4352007-a55b-4da5-b5c9-f4c8df89e58a`. Only deployments made by that SP become the "Active" deployment that actually serves traffic. Running `databricks apps deploy` with personal user credentials (i.e. running `deploy_app.sh` locally) creates a deployment record that shows `SUCCEEDED` in the CLI but does **not** replace the SP-owned active deployment — the app continues to serve the old version.
+
+**Correct deploy path:**
+1. Merge changes to `main` and push to GitHub.
+2. The `.github/workflows/deploy.yml` CI/CD workflow runs automatically, builds the frontend, syncs `pipelines/` and `backend/` to the workspace, then calls `databricks apps deploy` using SP credentials from GitHub secrets.
+3. Watch progress at `https://github.com/lakime/LiveZerobus/actions`.
+
 ```bash
+# Local scripts — for development/testing only, NOT for production deploys
 scripts/build_frontend.sh   # npm build → stages dist into backend/static/
-scripts/deploy_app.sh       # build frontend + databricks sync + databricks apps deploy
+scripts/deploy_app.sh       # build frontend + databricks sync (user credentials — does NOT update the live app)
 ```
+
+If you need to trigger a deploy without a code change, use the GitHub Actions **workflow_dispatch** (manual trigger) on `deploy.yml`.
 
 ### Bootstrap Unity Catalog (one-shot)
 ```bash
