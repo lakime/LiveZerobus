@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type SupplierApplication } from "../api";
+import { api, type SupplierApplication, type SupplierRow } from "../api";
 
 const STATUS_BADGE: Record<string, string> = {
   NEW: "badge wait", SCREENING: "badge wait",
@@ -47,6 +47,7 @@ const EMPTY_FORM = {
 
 export default function OnboardingPanel({ tick }: { tick: number }) {
   const [apps, setApps] = useState<SupplierApplication[]>([]);
+  const [suppliers, setSuppliers] = useState<SupplierRow[]>([]);
   const [form, setForm] = useState<typeof EMPTY_FORM>({
     ...EMPTY_FORM,
     offered_skus: new Set<string>(),
@@ -56,6 +57,10 @@ export default function OnboardingPanel({ tick }: { tick: number }) {
   useEffect(() => {
     api.applications().then(setApps).catch(() => setApps([]));
   }, [tick]);
+
+  useEffect(() => {
+    api.leaderboard(100).then(setSuppliers).catch(() => setSuppliers([]));
+  }, []);
 
   function toggleSku(sku: string) {
     setForm(prev => {
@@ -91,7 +96,13 @@ export default function OnboardingPanel({ tick }: { tick: number }) {
   return (
     <div>
       <form className="onboarding-form" onSubmit={submit}>
+        <datalist id="known-suppliers">
+          {Array.from(new Map(suppliers.map(s => [s.supplier_id, s])).values()).map(s => (
+            <option key={s.supplier_id} value={s.supplier_name ?? s.supplier_id} />
+          ))}
+        </datalist>
         <input
+          list="known-suppliers"
           placeholder="Supplier name"
           value={form.supplier_name}
           onChange={e => setForm({ ...form, supplier_name: e.target.value })}
