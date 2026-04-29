@@ -52,6 +52,7 @@ export default function OnboardingPanel({ tick }: { tick: number }) {
     ...EMPTY_FORM,
     offered_skus: new Set<string>(),
   });
+  const [isNewSupplier, setIsNewSupplier] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -61,6 +62,10 @@ export default function OnboardingPanel({ tick }: { tick: number }) {
   useEffect(() => {
     api.leaderboard(100).then(setSuppliers).catch(() => setSuppliers([]));
   }, []);
+
+  const uniqueSuppliers = Array.from(
+    new Map(suppliers.map(s => [s.supplier_id, s])).values()
+  ).sort((a, b) => (a.supplier_name ?? "").localeCompare(b.supplier_name ?? ""));
 
   function toggleSku(sku: string) {
     setForm(prev => {
@@ -86,6 +91,7 @@ export default function OnboardingPanel({ tick }: { tick: number }) {
         years_in_biz: form.years_in_biz,
       });
       setForm({ ...EMPTY_FORM, offered_skus: new Set<string>() });
+      setIsNewSupplier(false);
       const refreshed = await api.applications();
       setApps(refreshed);
     } finally {
@@ -96,18 +102,36 @@ export default function OnboardingPanel({ tick }: { tick: number }) {
   return (
     <div>
       <form className="onboarding-form" onSubmit={submit}>
-        <datalist id="known-suppliers">
-          {Array.from(new Map(suppliers.map(s => [s.supplier_id, s])).values()).map(s => (
-            <option key={s.supplier_id} value={s.supplier_name ?? s.supplier_id} />
+        <select
+          value={isNewSupplier ? "__new__" : form.supplier_name}
+          onChange={e => {
+            if (e.target.value === "__new__") {
+              setIsNewSupplier(true);
+              setForm({ ...form, supplier_name: "" });
+            } else {
+              setIsNewSupplier(false);
+              setForm({ ...form, supplier_name: e.target.value });
+            }
+          }}
+          required={!isNewSupplier}
+        >
+          <option value="" disabled>Select supplier…</option>
+          {uniqueSuppliers.map(s => (
+            <option key={s.supplier_id} value={s.supplier_name ?? s.supplier_id}>
+              {s.supplier_name ?? s.supplier_id}
+            </option>
           ))}
-        </datalist>
-        <input
-          list="known-suppliers"
-          placeholder="Supplier name"
-          value={form.supplier_name}
-          onChange={e => setForm({ ...form, supplier_name: e.target.value })}
-          required
-        />
+          <option value="__new__">— new supplier —</option>
+        </select>
+        {isNewSupplier && (
+          <input
+            placeholder="Enter new supplier name"
+            value={form.supplier_name}
+            onChange={e => setForm({ ...form, supplier_name: e.target.value })}
+            required
+            autoFocus
+          />
+        )}
         <input
           placeholder="contact@example.com"
           type="email"
