@@ -70,6 +70,14 @@ jobs:
             --file ./sap_bdc/app.yaml \
             "${{ steps.ws.outputs.path }}/app.yaml"
 
+      - name: Upload frontend/dist → workspace
+        # databricks sync respects .gitignore which excludes frontend/dist/.
+        # Use import-dir to force-upload the React bundle from npm run build.
+        run: |
+          databricks workspace import-dir --overwrite \
+            ./sap_bdc/frontend/dist \
+            "${{ steps.ws.outputs.path }}/frontend/dist"
+
       - name: Deploy app
         run: |
           databricks apps deploy "${APP_NAME}" \
