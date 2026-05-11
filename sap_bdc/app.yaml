@@ -6,19 +6,7 @@ command:
   - --port
   - "8080"
 
-resources:
-  - name: sap-bdc-token
-    description: "Bearer token for Delta Sharing authentication"
-    secret:
-      scope: sap-bdc
-      key: sap-bdc-token
-      permission: READ
-
 env:
-  - name: SAP_BDC_TOKEN
-    valueFrom:
-      resourceRef:
-        name: sap-bdc-token
   - name: HOST
     value: "https://sap-bdc-5347428297913551.11.azure.databricksapps.com"
   - name: DATA_DIR
