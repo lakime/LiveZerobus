@@ -110,6 +110,9 @@ jobs:
             "${{ steps.ws.outputs.path }}/static"
 
       - name: Ensure app compute is running
+        # Non-fatal: SP may lack UseBudgetPolicyPermission to start compute.
+        # The deploy step itself doesn't require active compute.
+        continue-on-error: true
         run: |
           STATE=$(databricks apps get "${APP_NAME}" --output json \
             | python3 -c 'import sys,json;print(json.load(sys.stdin)["compute_status"]["state"])')
