@@ -1,6 +1,4 @@
-fastapi==0.115.5
-uvicorn[standard]==0.32.1
-pyarrow>=17.0.0
-pandas>=2.2.0
-faker>=33.0.0
-python-multipart==0.0.12
+# Databricks Apps Python runtime already includes:
+#   fastapi, uvicorn, pandas, pyarrow, numpy
+# Only declare packages NOT in the base runtime to keep deploys fast.
+faker
