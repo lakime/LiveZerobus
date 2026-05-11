@@ -10,7 +10,7 @@ env:
   - name: SAP_BDC_TOKEN
     valueFrom:
       secretRef:
-        name: sap-bdc-token
+        name: sap-bdc/sap-bdc-token
   - name: HOST
     value: "https://sap-bdc-5347428297913551.11.azure.databricksapps.com"
   - name: DATA_DIR
