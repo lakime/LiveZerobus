@@ -192,13 +192,8 @@ jobs:
       - name: Resolve workspace path
         id: ws
         run: |
-          if [[ -n "${{ vars.DATABRICKS_WORKSPACE_PATH }}" ]]; then
-            BASE="${{ vars.DATABRICKS_WORKSPACE_PATH }}"
-          else
-            WS_USER="$(databricks current-user me --output json | python3 -c 'import json,sys;print(json.load(sys.stdin)["userName"])')"
-            BASE="/Workspace/Users/${WS_USER}/livezerobus"
-          fi
-          echo "path=${BASE}/sap_bdc" >> "$GITHUB_OUTPUT"
+          WS_USER="$(databricks current-user me --output json | python3 -c 'import json,sys;print(json.load(sys.stdin)["userName"])')"
+          echo "path=/Workspace/Users/${WS_USER}/sap-bdc" >> "$GITHUB_OUTPUT"
 
       - name: Sync sap_bdc/ → workspace
         run: |
