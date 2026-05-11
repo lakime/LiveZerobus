@@ -37,11 +37,14 @@ def _resolve_static_dir() -> Path:
         candidates.append(p / "frontend" / "dist")
         p = p.parent
     for c in candidates:
-        if (c / "index.html").exists():
-            log.info("Resolved STATIC_DIR=%s", c)
-            return c
+        try:
+            if (c / "index.html").exists():
+                log.info("Resolved STATIC_DIR=%s", c)
+                return c
+        except Exception:
+            continue
     log.warning("Could not find frontend/dist; tried: %s", [str(c) for c in candidates])
-    return candidates[0]  # fallback to original guess
+    return candidates[0]
 
 
 STATIC_DIR = _resolve_static_dir()

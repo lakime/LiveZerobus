@@ -47,6 +47,9 @@ jobs:
           cd sap_bdc/frontend
           npm ci
           npm run build
+          # Strip node_modules so it doesn't get uploaded to Databricks
+          # (saves several thousand files / minutes of upload time)
+          rm -rf node_modules
 
       - name: Resolve workspace path
         id: ws
