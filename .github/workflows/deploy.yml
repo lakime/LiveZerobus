@@ -195,9 +195,11 @@ jobs:
           WS_USER="$(databricks current-user me --output json | python3 -c 'import json,sys;print(json.load(sys.stdin)["userName"])')"
           echo "path=/Workspace/Users/${WS_USER}/sap-bdc" >> "$GITHUB_OUTPUT"
 
-      - name: Sync sap_bdc/ → workspace
+      - name: Upload sap_bdc/ → workspace
+        # import-dir force-uploads all file types including app.yaml;
+        # databricks sync may skip/corrupt non-notebook files like YAML.
         run: |
-          databricks sync --full \
+          databricks workspace import-dir --overwrite \
             ./sap_bdc \
             "${{ steps.ws.outputs.path }}"
 
