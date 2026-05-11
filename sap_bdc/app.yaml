@@ -1,0 +1,17 @@
+command:
+  - uvicorn
+  - app.main:app
+  - --host
+  - 0.0.0.0
+  - --port
+  - "8080"
+
+env:
+  - name: SAP_BDC_TOKEN
+    valueFrom:
+      secretRef:
+        name: sap-bdc-token
+  - name: HOST
+    value: "https://sap-bdc-5347428297913551.11.azure.databricksapps.com"
+  - name: DATA_DIR
+    value: "/tmp/sap_bdc_data"

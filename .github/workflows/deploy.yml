@@ -29,6 +29,7 @@ on:
       - "backend/**"
       - "frontend/**"
       - "pipelines/**"
+      - "sap_bdc/**"
       - "scripts/build_frontend.sh"
       - "scripts/deploy_app.sh"
       - ".github/workflows/deploy.yml"
@@ -160,3 +161,52 @@ jobs:
           fi
           databricks pipelines start-update "${PIPELINE_ID}" \
             --full-refresh-all=false
+
+  deploy-sap-bdc:
+    name: Build + deploy sap-bdc
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABRICKS_HOST:          ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID:     ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: sap_bdc/frontend/package-lock.json
+
+      - name: Setup Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Build SAP BDC frontend
+        run: |
+          cd sap_bdc/frontend
+          npm ci
+          npm run build
+
+      - name: Resolve workspace path
+        id: ws
+        run: |
+          if [[ -n "${{ vars.DATABRICKS_WORKSPACE_PATH }}" ]]; then
+            BASE="${{ vars.DATABRICKS_WORKSPACE_PATH }}"
+          else
+            WS_USER="$(databricks current-user me --output json | python3 -c 'import json,sys;print(json.load(sys.stdin)["userName"])')"
+            BASE="/Workspace/Users/${WS_USER}/livezerobus"
+          fi
+          echo "path=${BASE}/sap_bdc" >> "$GITHUB_OUTPUT"
+
+      - name: Sync sap_bdc/ → workspace
+        run: |
+          databricks sync --full \
+            ./sap_bdc \
+            "${{ steps.ws.outputs.path }}"
+
+      - name: Deploy sap-bdc Databricks App
+        run: |
+          databricks apps deploy sap-bdc \
+            --source-code-path "${{ steps.ws.outputs.path }}"
