@@ -1,6 +1,5 @@
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
-deltalake==1.5.1
 pyarrow>=17.0.0
 pandas>=2.2.0
 faker>=33.0.0

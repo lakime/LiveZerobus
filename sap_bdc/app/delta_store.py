@@ -1,71 +1,76 @@
-"""Read/write Delta Lake tables using the deltalake (delta-rs) package."""
+"""Parquet-backed table storage for the SAP BDC mock service.
+
+We don't use the deltalake package here — just plain Parquet files — but we
+keep the Delta Sharing protocol semantics for compatibility with Databricks
+Unity Catalog. The module is named delta_store for historical reasons.
+"""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-import pyarrow as pa  # needed for arro3 → pyarrow conversion
-from deltalake import DeltaTable, write_deltalake
-
-
-def _add_actions_dict(dt: DeltaTable) -> dict:
-    """Convert get_add_actions result to plain dict regardless of deltalake version."""
-    actions = dt.get_add_actions(flatten=True)
-    if hasattr(actions, "to_pydict"):
-        return actions.to_pydict()
-    # deltalake 1.x returns an arro3 Table — convert via Arrow C stream
-    arrow_table = pa.RecordBatchReader.from_stream(actions).read_all()
-    return arrow_table.to_pydict()
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from .config import Settings
 
 
-def _table_path(settings: Settings, name: str) -> Path:
+def _table_dir(settings: Settings, name: str) -> Path:
     return settings.data_dir / name
 
 
+def _parquet_path(settings: Settings, name: str) -> Path:
+    return _table_dir(settings, name) / "part-0.parquet"
+
+
+def _version_path(settings: Settings, name: str) -> Path:
+    return _table_dir(settings, name) / "_version.json"
+
+
 def write_table(settings: Settings, name: str, df: pd.DataFrame) -> None:
-    path = str(_table_path(settings, name))
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
-    write_deltalake(path, df, mode="overwrite", schema_mode="overwrite")
+    tdir = _table_dir(settings, name)
+    tdir.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pandas(df, preserve_index=False),
+                   _parquet_path(settings, name))
+    vp = _version_path(settings, name)
+    next_v = 0
+    if vp.exists():
+        next_v = int(json.loads(vp.read_text()).get("version", 0)) + 1
+    vp.write_text(json.dumps({"version": next_v}))
 
 
 def read_table(settings: Settings, name: str) -> pd.DataFrame:
-    path = _table_path(settings, name)
-    if not path.exists():
+    p = _parquet_path(settings, name)
+    if not p.exists():
         return pd.DataFrame()
-    dt = DeltaTable(str(path))
-    return dt.to_pandas()
+    return pq.read_table(p).to_pandas()
 
 
 def table_version(settings: Settings, name: str) -> int:
-    path = _table_path(settings, name)
-    if not path.exists():
+    vp = _version_path(settings, name)
+    if not vp.exists():
         return 0
-    return DeltaTable(str(path)).version()
+    return int(json.loads(vp.read_text()).get("version", 0))
 
 
 def table_metadata(settings: Settings, name: str) -> dict[str, Any]:
-    path = _table_path(settings, name)
-    if not path.exists():
+    p = _parquet_path(settings, name)
+    if not p.exists():
         return {}
-    dt = DeltaTable(str(path))
-    fields = []
-    for field in dt.schema().fields:
-        fields.append({
-            "name": field.name,
-            "type": _delta_type_str(str(field.type)),
-            "nullable": field.nullable,
-            "metadata": {},
-        })
-    schema_str = json.dumps({"type": "struct", "fields": fields})
+    schema = pq.read_schema(p)
+    fields = [
+        {"name": f.name, "type": _arrow_to_delta_type(f.type),
+         "nullable": True, "metadata": {}}
+        for f in schema
+    ]
     return {
-        "id": str(dt.metadata().id),
+        "id": hashlib.md5(name.encode()).hexdigest(),
         "format": {"provider": "parquet", "options": {}},
-        "schemaString": schema_str,
-        "partitionColumns": dt.metadata().partition_columns,
+        "schemaString": json.dumps({"type": "struct", "fields": fields}),
+        "partitionColumns": [],
         "configuration": {},
     }
 
@@ -75,45 +80,38 @@ def list_table_names(settings: Settings) -> list[str]:
         return []
     return sorted(
         p.name for p in settings.data_dir.iterdir()
-        if p.is_dir() and (p / "_delta_log").exists()
+        if p.is_dir() and (p / "part-0.parquet").exists()
     )
 
 
 def table_files(settings: Settings, name: str) -> list[dict[str, Any]]:
-    """Return list of Parquet file metadata for Delta Sharing query response."""
-    path = _table_path(settings, name)
-    if not path.exists():
+    p = _parquet_path(settings, name)
+    if not p.exists():
         return []
-    dt = DeltaTable(str(path))
-    add_actions = _add_actions_dict(dt)
-    files = []
-    for i, rel_path in enumerate(add_actions.get("path", [])):
-        size = add_actions.get("size_bytes", [0] * (i + 1))[i] or 0
-        num_records = add_actions.get("num_records", [0] * (i + 1))[i] or 0
-        files.append({
-            "path": rel_path,
-            "size": int(size),
-            "num_records": int(num_records),
-        })
-    return files
+    meta = pq.read_metadata(p)
+    return [{
+        "path": "part-0.parquet",
+        "size": p.stat().st_size,
+        "num_records": meta.num_rows,
+    }]
 
 
 def table_row_count(settings: Settings, name: str) -> int:
-    path = _table_path(settings, name)
-    if not path.exists():
+    p = _parquet_path(settings, name)
+    if not p.exists():
         return 0
-    try:
-        actions = _add_actions_dict(DeltaTable(str(path)))
-        return int(sum(actions.get("num_records", []) or [0]))
-    except Exception:
-        return 0
+    return pq.read_metadata(p).num_rows
 
 
-def _delta_type_str(type_repr: str) -> str:
-    """Convert deltalake PrimitiveType string repr to Delta Sharing type name."""
-    # type_repr looks like: PrimitiveType("long"), PrimitiveType("string"), etc.
-    import re
-    m = re.search(r'"([^"]+)"', type_repr)
-    if m:
-        return m.group(1)
+def _arrow_to_delta_type(t: pa.DataType) -> str:
+    if pa.types.is_int64(t) or pa.types.is_int32(t) or pa.types.is_int16(t) or pa.types.is_int8(t):
+        return "long"
+    if pa.types.is_float64(t) or pa.types.is_float32(t):
+        return "double"
+    if pa.types.is_boolean(t):
+        return "boolean"
+    if pa.types.is_date(t):
+        return "date"
+    if pa.types.is_timestamp(t):
+        return "timestamp"
     return "string"
