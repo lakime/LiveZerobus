@@ -14,6 +14,10 @@ class Settings:
     schema: str
     frontend_dist: str
     refresh_interval_s: int
+    # SAP BDC integration — Delta Sharing catalog mounted in UC.
+    sap_bdc_warehouse_id: str
+    sap_bdc_catalog: str
+    sap_bdc_schema: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -29,4 +33,8 @@ class Settings:
             # override with FRONTEND_DIST=../frontend/dist.
             frontend_dist=os.environ.get("FRONTEND_DIST", "static"),
             refresh_interval_s=int(os.environ.get("REFRESH_INTERVAL_S", "3")),
+            # Optional. If unset, the SAP BDC tab shows "not connected".
+            sap_bdc_warehouse_id=os.environ.get("SAP_BDC_WAREHOUSE_ID", ""),
+            sap_bdc_catalog=os.environ.get("SAP_BDC_CATALOG", "sapsofts"),
+            sap_bdc_schema=os.environ.get("SAP_BDC_SCHEMA", "procurement"),
         )

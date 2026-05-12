@@ -28,11 +28,24 @@ export default function SapPanel({ tick }: { tick: number }) {
   const [invoices, setInvoices] = useState<SapInvoiceMatch[]>([]);
   const [poFilter, setPoFilter] = useState("");
   const [invFilter, setInvFilter] = useState("");
+  // BDC vendor lookup — LIFNR → NAME1. Empty when BDC not connected, in
+  // which case rows fall back to supplier_id (no harm done).
+  const [vendorLookup, setVendorLookup] = useState<Record<string, string>>({});
 
   useEffect(() => {
     api.sapPoLines().then(setPoLines).catch(() => setPoLines([]));
     api.sapInvoiceMatching().then(setInvoices).catch(() => setInvoices([]));
+    // Refresh lookup at most on first tick; vendor master rarely changes.
+    if (Object.keys(vendorLookup).length === 0) {
+      api.sapBdcVendorLookup().then(setVendorLookup).catch(() => null);
+    }
   }, [tick]);
+
+  // Enrich rows: prefer BDC vendor name, then existing supplier_name, then raw id.
+  function vendorLabel(id: string | null | undefined, fallback: string | null | undefined): string {
+    if (id && vendorLookup[id]) return `${vendorLookup[id]} (${id})`;
+    return fallback ?? id ?? "—";
+  }
 
   const filteredPo = poFilter
     ? poLines.filter((r) => r.po_status === poFilter)
@@ -81,7 +94,7 @@ export default function SapPanel({ tick }: { tick: number }) {
               {filteredPo.map((r) => (
                 <tr key={`${r.po_number}-${r.po_item}`}>
                   <td className="mono small">{r.po_number}/{r.po_item}</td>
-                  <td>{r.supplier_name ?? r.supplier_id ?? "—"}{r.supplier_tier ? <span className="muted small"> [{r.supplier_tier}]</span> : null}</td>
+                  <td>{vendorLabel(r.supplier_id, r.supplier_name)}{r.supplier_tier ? <span className="muted small"> [{r.supplier_tier}]</span> : null}</td>
                   <td>{r.sku ?? "—"}</td>
                   <td className="num">{fmt(r.quantity_g, 0)}</td>
                   <td className="num">${fmt(r.net_value_usd)}</td>
@@ -138,7 +151,7 @@ export default function SapPanel({ tick }: { tick: number }) {
                 <tr key={r.invoice_doc_number}>
                   <td className="mono small">{r.invoice_doc_number}</td>
                   <td className="mono small">{r.po_number ?? "—"}/{r.po_item ?? "—"}</td>
-                  <td>{r.supplier_id ?? "—"}</td>
+                  <td>{vendorLabel(r.supplier_id, null)}</td>
                   <td>{r.sku ?? "—"}</td>
                   <td className="num">${fmt(r.net_amount_usd)}</td>
                   <td className="num">{r.po_net_value_usd != null ? `$${fmt(r.po_net_value_usd)}` : "—"}</td>

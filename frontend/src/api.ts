@@ -286,4 +286,58 @@ export const api = {
     }>(
       `/api/agents/invoices/simulate${poId ? `?po_id=${encodeURIComponent(poId)}` : ""}`,
     ),
+
+  // SAP BDC (Delta Sharing from external SAP mock)
+  sapBdcInfo: () =>
+    getJSON<{
+      connected: boolean;
+      catalog: string;
+      schema: string;
+      reason?: string;
+      table_count?: number;
+      tables?: string[];
+    }>("/api/sap-bdc/info"),
+
+  sapBdcVendors: (q = "", limit = 100) =>
+    getJSON<SapBdcVendor[]>(
+      `/api/sap-bdc/vendors?q=${encodeURIComponent(q)}&limit=${limit}`,
+    ),
+
+  sapBdcVendorLookup: () =>
+    getJSON<Record<string, string>>("/api/sap-bdc/vendor-lookup"),
+
+  sapBdcPurchaseOrders: (q = "", limit = 200) =>
+    getJSON<SapBdcPoLine[]>(
+      `/api/sap-bdc/purchase-orders?q=${encodeURIComponent(q)}&limit=${limit}`,
+    ),
+};
+
+export type SapBdcVendor = {
+  LIFNR: string;
+  NAME1: string | null;
+  LAND1: string | null;
+  ORT01: string | null;
+  STRAS: string | null;
+  TELF1: string | null;
+  SPRAS: string | null;
+  KTOKK: string | null;
+};
+
+export type SapBdcPoLine = {
+  po_number: string;
+  po_type: string | null;
+  vendor_id: string;
+  vendor_name: string | null;
+  vendor_country: string | null;
+  currency: string | null;
+  company_code: string | null;
+  po_date: string | null;
+  item: string | null;
+  material: string | null;
+  plant: string | null;
+  quantity: number | null;
+  uom: string | null;
+  net_price: number | null;
+  net_value: number | null;
+  delivery_date: string | null;
 };

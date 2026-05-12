@@ -27,6 +27,8 @@ cd backend
 pip install -r requirements.txt
 # Set env vars: DATABRICKS_HOST, DATABRICKS_CLIENT_ID, DATABRICKS_CLIENT_SECRET,
 #               PGHOST, PGPORT, PGDATABASE, PGUSER, PG_SCHEMA, LAKEBASE_BRANCH, LAKEBASE_ENDPOINT, FM_MODEL
+# Optional (for SAP BDC tab): SAP_BDC_WAREHOUSE_ID, SAP_BDC_CATALOG (default sapsofts),
+#                              SAP_BDC_SCHEMA (default procurement)
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -104,7 +106,7 @@ Simulator streams and their Bronze tables:
 - **agents/db.py** — Postgres query helpers shared by agents
 
 ### Frontend (`frontend/src/`)
-- **App.tsx** — Root component with **9 tabs**: Dashboard, Emails, POs & Budget, Supplier Onboarding, Invoices, Agent Runs, SAP P2P, IoT Fields, Pipeline. Every tab has a `↻ Refresh` button (manual re-fetch).
+- **App.tsx** — Root component with **10 tabs**: Dashboard, Emails, POs & Budget, Supplier Onboarding, Invoices, Agent Runs, SAP P2P, **SAP BDC**, IoT Fields, Pipeline. Every tab has a `↻ Refresh` button (manual re-fetch).
 - **api.ts** — All `fetch` calls to the backend `/api/*` endpoints
 - **components/**
   - `InventoryPanel`, `SupplierLeaderboard`, `CommodityChart`, `DemandChart`, `RecommendationsTable` — Dashboard tab
@@ -112,6 +114,7 @@ Simulator streams and their Bronze tables:
   - **`SapPanel`** — SAP P2P tab: two tables (Open PO Lines + 3-way Invoice Match), filterable by status
   - **`IotFieldsPanel`** — IoT Fields tab: farm overview header + per-room cards with SVG arc-gauge speedometers + sparklines for all 7 sensor types; colour-coded NOMINAL/CAUTION/ALERT
   - **`PipelinePanel`** — Pipeline tab: Lakeflow pipeline status + manual trigger
+  - **`SapBdcPanel`** — SAP BDC tab: zero-copy view of an external Delta-Shared SAP BDC tenant. Three sub-views: Overview, Vendors (LFA1), Purchase Orders (EKKO+EKPO joined with LFA1). Backend queries `${SAP_BDC_CATALOG}.${SAP_BDC_SCHEMA}.*` via the SQL warehouse (`backend/app/warehouse.py`). Falls back to a "DISCONNECTED" banner when `SAP_BDC_WAREHOUSE_ID` is unset or the catalog isn't reachable. Also exposes `/api/sap-bdc/vendor-lookup` (LIFNR→NAME1 dict) that the SAP P2P tab uses to enrich its rows with real vendor names — gracefully degrades to raw LIFNR when BDC is offline.
 
 ### Simulators (`simulators/`)
 - **inventory_simulator.py** — Emits seed stock changes per grow room
