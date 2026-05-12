@@ -229,6 +229,101 @@ Env var names: use `LAKEBASE_PROJECT` (or `LAKEBASE_INSTANCE` as backward-compat
 
 **Postgres schema**: all tables live in `procurement` — both synced Gold tables and native agent-state tables. `PG_SCHEMA=procurement`. Do not use `liveoltp`; that schema was replaced.
 
+## SAP BDC Delta Sharing host (`sap_bdc/`)
+
+A standalone FastAPI service that mocks SAP Business Data Cloud and exposes 15 SAP procurement tables (EKKO, LFA1, MARA, etc.) over the **Delta Sharing Protocol v1**, allowing Databricks Unity Catalog to consume them zero-copy. The data is generated at startup as plain Parquet files (no Delta transaction logs — just `part-0.parquet` per table directory) and served with HMAC-signed time-limited URLs.
+
+### Where it runs
+
+**Not on Databricks Apps.** Databricks Apps wraps every route in an OAuth proxy that intercepts requests with `Authorization: Bearer <token>` headers (even Databricks SP M2M tokens) and 302-redirects them to OAuth login. Delta Sharing clients cannot follow OAuth redirects — they only know how to send the profile.json bearer token. The OAuth proxy has no path-allowlist mechanism. **The only way to run a Delta Sharing server reachable by Databricks UC is outside Databricks Apps.**
+
+Current production deployment: **Docker container on a self-hosted VPS, behind an external Nginx reverse proxy that terminates Let's Encrypt TLS**. See `sap_bdc/Dockerfile`, `sap_bdc/docker-compose.yml`, `sap_bdc/nginx.conf.example`. Public URL: `https://photop.uzar.pl`.
+
+### Required Nginx settings for Delta Sharing
+
+In addition to standard TLS + proxy_pass headers, parquet downloads need:
+- `proxy_buffering off;` — stream large parquet files without buffering through nginx
+- `proxy_read_timeout 600s;` / `proxy_send_timeout 600s;` — large downloads
+- `client_max_body_size 100m;` — precaution for large payloads
+- `large_client_header_buffers 4 16k;` — signed Delta Sharing URLs are long
+
+### Required Delta Sharing Protocol v1 endpoints
+
+Implemented in `sap_bdc/app/sharing/router.py`:
+
+| Method | Path | Returns |
+|--------|------|---------|
+| GET | `/delta-sharing/shares` | JSON `{items:[{name,id}], nextPageToken}` |
+| GET | `/delta-sharing/shares/{share}` | JSON `{share:{name,id}}` |
+| GET | `/delta-sharing/shares/{share}/schemas` | JSON list |
+| GET | `/delta-sharing/shares/{share}/schemas/{schema}/tables` | JSON list (15 tables) |
+| GET | `/delta-sharing/shares/{share}/all-tables` | JSON list — **critical**, UC calls this during catalog import |
+| GET | `…/tables/{table}/version` | Empty body, `Delta-Table-Version` header |
+| GET | `…/tables/{table}/metadata` | NDJSON: `protocol` line + `metaData` line |
+| POST | `…/tables/{table}/query` | NDJSON: `protocol` + `metaData` + `file` line per parquet |
+| GET | `/delta-sharing/files/{table}/{token}/{filename}` | Raw parquet bytes (HMAC-signed URL, no bearer needed) |
+
+NDJSON format: lines separated by `\n`, terminated by `\n`. Each line is a single JSON object. Order matters: `protocol` first, then `metaData`, then `file` lines.
+
+### Databricks UC compatibility gotchas (hard-learned)
+
+1. **Entity IDs must be canonical UUIDs**, not raw md5 hex.
+   ```python
+   import uuid, hashlib
+   uuid_str = str(uuid.UUID(bytes=hashlib.md5(name.encode()).digest()))
+   ```
+   UC errors: `Responded entity id(…) needs to be a UUID`.
+
+2. **Table names must be matched case-insensitively.** UC lowercases all identifiers — when you list table `EKKO`, UC stores it as `ekko` and asks back via `/tables/ekko/metadata`. Resolve incoming names against the stored set with `name.lower()` matching.
+
+3. **File responses must not include `null` optional fields** like `timestamp`. UC rejects null values silently. Omit the field instead.
+
+4. **Use `FileResponse`, not `StreamingResponse`, for parquet downloads.** UC's Apache HttpClient rejects chunked transfer encoding (`Transfer-Encoding: chunked`) even on HTTP 200. `FileResponse` sets a proper `Content-Length` header.
+
+5. **The `HOST` env var must include `https://` scheme.** Signed file URLs are built from `f"{HOST}/delta-sharing/files/..."` — without a scheme, UC's HttpClient throws `ClientProtocolException`. `app/config.py` defensively prepends `https://` for non-localhost values.
+
+6. **The catch-all SPA route must come AFTER all Delta Sharing routes.** If a `/delta-sharing/foo` URL falls through to the React SPA, UC gets HTML and errors with `DS_INVALID_RESPONSE_FROM_DS_SERVER: invalid json`. The sharing router has its own JSON 404 catch-all for any unmatched `/delta-sharing/*` path.
+
+7. **UC caches the share's schema list at catalog-creation time.** If the share was empty or broken when you ran `CREATE CATALOG … USING SHARE …`, fixing the server later doesn't auto-resync. You must `DROP CATALOG … CASCADE` and re-create.
+
+### Test plan when adapting to a new data domain
+
+```bash
+TOKEN=<server bearer token>
+HOST=https://your-public-host
+
+# 1. Auth + share enumeration
+curl -H "Authorization: Bearer $TOKEN" $HOST/delta-sharing/shares
+
+# 2. Schema enumeration
+curl -H "Authorization: Bearer $TOKEN" $HOST/delta-sharing/shares/<share>/schemas
+curl -H "Authorization: Bearer $TOKEN" $HOST/delta-sharing/shares/<share>/all-tables
+
+# 3. Table metadata — use lowercase to confirm case-insensitive lookup
+curl -H "Authorization: Bearer $TOKEN" \
+  $HOST/delta-sharing/shares/<share>/schemas/<schema>/tables/<lowercase_name>/metadata
+
+# 4. Query for file URLs — verify Content-Length on the parquet download
+URL=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $HOST/delta-sharing/shares/<share>/schemas/<schema>/tables/<table>/query \
+  | tail -1 | python3 -c "import json,sys; print(json.loads(sys.stdin.read())['file']['url'])")
+curl -I "$URL"
+# Headers MUST include: content-length: <bytes>
+# Headers MUST NOT include: transfer-encoding: chunked
+```
+
+If any step fails, the matching gotcha above is usually the cause. UC's error messages are often misleading (`HTTP 200 OK` reported as "request failed", etc.) — always check the actual headers and response body directly with curl before changing code.
+
+### Reusing this for a different data domain
+
+Replace these layers; the protocol code stays as-is:
+1. `app/generator/` — generators that produce pandas DataFrames per table
+2. `app/config.py` — `share_name` and `schema_name` properties
+3. `app/routes/tables.py` table descriptions / module codes for the GUI
+4. Frontend `App.tsx` t-codes and labels
+
+Everything in `app/sharing/`, `app/delta_store.py`, the Dockerfile, and the nginx config is data-domain-agnostic.
+
 ## Important conventions
 - The React build must be staged into `backend/static/` before deploying — `build_frontend.sh` handles this. Stale `.js` files alongside `.tsx` are cleaned before every build.
 - Lakebase Postgres auth uses OAuth tokens (not passwords); `lakebase.py` rotates them transparently via `w.postgres.generate_database_credential`.
