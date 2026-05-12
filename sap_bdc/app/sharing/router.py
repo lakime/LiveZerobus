@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -19,8 +20,14 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["delta-sharing"])
 
 NDJSON = "application/x-ndjson; charset=utf-8"
-SHARE_ID = "sap-procurement-share-v1"
-SCHEMA_ID = "procurement-schema-v1"
+
+# Delta Sharing requires entity IDs to be valid UUIDs. We derive them
+# deterministically from stable names (md5 → 16 bytes → UUID).
+def _stable_uuid(name: str) -> str:
+    return str(uuid.UUID(bytes=hashlib.md5(name.encode()).digest()))
+
+SHARE_ID = _stable_uuid("share:sap-procurement")
+SCHEMA_ID = _stable_uuid("schema:procurement")
 
 
 def _settings(request: Request) -> Settings:
@@ -137,7 +144,7 @@ def query_table(share: str, schema: str, table: str, request: Request):
         basename = Path(f["path"]).name
         token = sign_file_token(s.token, table, basename)
         url = f"{s.host}/delta-sharing/files/{table}/{token}/{basename}"
-        fid = hashlib.md5(f["path"].encode()).hexdigest()
+        fid = _stable_uuid(f"file:{table}:{f['path']}")
         lines.append(file_line(url, fid, f["size"], f["num_records"]))
 
     body = ndjson(*lines)
@@ -197,7 +204,7 @@ def _assert_table(table: str, s: Settings) -> None:
 
 
 def _table_id(name: str) -> str:
-    return hashlib.md5(name.encode()).hexdigest()
+    return _stable_uuid(f"table:{name}")
 
 
 # Catch-all for any unknown /delta-sharing/* path so clients always get

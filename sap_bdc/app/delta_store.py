@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -67,7 +68,7 @@ def table_metadata(settings: Settings, name: str) -> dict[str, Any]:
         for f in schema
     ]
     return {
-        "id": hashlib.md5(name.encode()).hexdigest(),
+        "id": str(uuid.UUID(bytes=hashlib.md5(name.encode()).digest())),
         "format": {"provider": "parquet", "options": {}},
         "schemaString": json.dumps({"type": "struct", "fields": fields}),
         "partitionColumns": [],
