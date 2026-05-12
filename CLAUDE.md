@@ -314,6 +314,18 @@ curl -I "$URL"
 
 If any step fails, the matching gotcha above is usually the cause. UC's error messages are often misleading (`HTTP 200 OK` reported as "request failed", etc.) — always check the actual headers and response body directly with curl before changing code.
 
+### Per-table sharing controls
+
+Operators can enable / disable individual tables for the Delta Sharing protocol without redeploying. State lives as JSON at `${DATA_DIR}/_sharing.json` (`{"enabled": [...]}`).
+
+- **Default state: all tables DISABLED.** Explicit enable required.
+- `GET /api/sharing` → per-table status
+- `POST /api/sharing/{table}` body `{"enabled": true|false}` → toggle one
+- `POST /api/sharing/enable-all` / `POST /api/sharing/disable-all` → bulk
+- Disabled tables: invisible to `/delta-sharing/*` (`/tables`, `/all-tables`, `/metadata`, `/query`, `/files/*` all return 404). Visible in `/api/tables` GUI for staging.
+
+The Share tab in the GUI has per-table toggle checkboxes + Enable-all / Disable-all bulk buttons.
+
 ### Reusing this for a different data domain
 
 Replace these layers; the protocol code stays as-is:

@@ -4,8 +4,12 @@ async function get<T>(url: string): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-async function post<T>(url: string): Promise<T> {
-  const r = await fetch(url, { method: "POST" });
+async function post<T>(url: string, body?: unknown): Promise<T> {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
   if (!r.ok) throw new Error(`${url} → ${r.status}`);
   return r.json() as Promise<T>;
 }
@@ -33,11 +37,23 @@ export type ServiceInfo = {
   host: string;
   tables_ready: number;
   tables_total: number;
+  tables_shared: number;
 };
 
 export type RegenerateResult = {
   ok: boolean;
   tables: { name: string; rows: number }[];
+};
+
+export type SharingEntry = {
+  name: string;
+  enabled: boolean;
+};
+
+export type SharingStatus = {
+  tables: SharingEntry[];
+  enabled_count: number;
+  total_count: number;
 };
 
 export const api = {
@@ -56,4 +72,10 @@ export const api = {
     a.download = "sap-bdc-profile.json";
     a.click();
   },
+
+  sharingStatus: () => get<SharingStatus>("/api/sharing"),
+  setSharing: (name: string, enabled: boolean) =>
+    post<SharingEntry>(`/api/sharing/${encodeURIComponent(name)}`, { enabled }),
+  enableAll: () => post<{ enabled: string[] }>("/api/sharing/enable-all"),
+  disableAll: () => post<{ enabled: string[] }>("/api/sharing/disable-all"),
 };

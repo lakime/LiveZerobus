@@ -15,6 +15,7 @@ from ..delta_store import (
 )
 from .auth import sign_file_token, verify_bearer, verify_file_token
 from .protocol import PROTOCOL_LINE, file_line, metadata_line, ndjson
+from .visibility import is_shared
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["delta-sharing"])
@@ -76,7 +77,7 @@ def list_tables(share: str, schema: str, request: Request):
     s = _settings(request)
     _assert_share(share, s)
     _assert_schema(schema, s)
-    names = list_table_names(s)
+    names = [n for n in list_table_names(s) if is_shared(s, n)]
     items = [
         {"name": name, "schema": s.schema_name, "share": s.share_name,
          "id": _table_id(name), "shareId": SHARE_ID}
@@ -91,7 +92,7 @@ def list_all_tables(share: str, request: Request):
     _auth(request)
     s = _settings(request)
     _assert_share(share, s)
-    names = list_table_names(s)
+    names = [n for n in list_table_names(s) if is_shared(s, n)]
     items = [
         {"name": name, "schema": s.schema_name, "share": s.share_name,
          "id": _table_id(name), "shareId": SHARE_ID}
@@ -163,7 +164,8 @@ def serve_file(table: str, token: str, filename: str, request: Request):
     if not verify_file_token(s.token, token, table, filename):
         raise HTTPException(status_code=403, detail="Invalid or expired file token")
 
-    # Find the real (case-correct) directory for this table.
+    # _resolve_table enforces visibility. A token issued before the table
+    # was disabled becomes inert — the file can't be fetched while disabled.
     try:
         actual_table = _resolve_table(table, s)
     except HTTPException:
@@ -200,12 +202,17 @@ def _assert_schema(schema: str, s: Settings) -> None:
 
 
 def _resolve_table(table: str, s: Settings) -> str:
-    """Case-insensitive table lookup — Databricks UC lowercases names so
-    `ekko` must resolve to the actual stored directory `EKKO`."""
+    """Case-insensitive table lookup that also enforces the visibility flag.
+    Databricks UC lowercases names (`ekko` → must resolve to `EKKO`).
+    Tables that exist but are not currently shared return the same 404
+    so external clients can't distinguish "exists but disabled" from
+    "doesn't exist"."""
     tables = list_table_names(s)
     target = table.lower()
     for t in tables:
         if t.lower() == target:
+            if not is_shared(s, t):
+                raise HTTPException(status_code=404, detail=f"Table '{table}' not found")
             return t
     raise HTTPException(status_code=404, detail=f"Table '{table}' not found")
 
