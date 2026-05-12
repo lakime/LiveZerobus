@@ -1,31 +1,45 @@
-# Local Docker deployment of the SAP BDC mock as a real Delta Sharing server.
+# sap-bdc as a standalone Delta Sharing server with auto-HTTPS via Caddy.
 #
-# Run:    docker compose up --build -d
-# Logs:   docker compose logs -f
-# Stop:   docker compose down
+#   docker compose up --build -d
 #
-# For Databricks UC to reach this service over the internet, expose port 8000
-# via Cloudflare Tunnel, ngrok, or a public VPS. Then set HOST to that URL
-# so the Parquet file URLs in Delta Sharing query responses point to the
-# correct hostname.
+# Required env vars (in .env or exported):
+#   SAP_BDC_TOKEN  — random bearer token for Delta Sharing clients
+#   PUBLIC_HOST    — your domain, e.g. sap-bdc.example.com (no scheme)
+#   ACME_EMAIL     — email for Let's Encrypt expiry notices
 
 services:
   sap-bdc:
     build: .
     container_name: sap-bdc
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
-      # Override this with a real random token in production.
-      SAP_BDC_TOKEN: ${SAP_BDC_TOKEN:-changeme}
-      # Must be the externally-reachable URL — used to build signed
-      # Parquet file URLs that Databricks UC will fetch.
-      HOST: ${HOST:-http://localhost:8000}
+      SAP_BDC_TOKEN: ${SAP_BDC_TOKEN}
+      # HOST must match the public URL so signed parquet URLs work
+      HOST: https://${PUBLIC_HOST}
       DATA_DIR: /data
     volumes:
-      # Persist generated tables across container restarts.
       - sap-bdc-data:/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: sap-bdc-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - sap-bdc
     restart: unless-stopped
 
 volumes:
   sap-bdc-data:
+  caddy-data:
+  caddy-config:
