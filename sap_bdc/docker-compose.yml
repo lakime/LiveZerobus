@@ -1,0 +1,31 @@
+# Local Docker deployment of the SAP BDC mock as a real Delta Sharing server.
+#
+# Run:    docker compose up --build -d
+# Logs:   docker compose logs -f
+# Stop:   docker compose down
+#
+# For Databricks UC to reach this service over the internet, expose port 8000
+# via Cloudflare Tunnel, ngrok, or a public VPS. Then set HOST to that URL
+# so the Parquet file URLs in Delta Sharing query responses point to the
+# correct hostname.
+
+services:
+  sap-bdc:
+    build: .
+    container_name: sap-bdc
+    ports:
+      - "8000:8000"
+    environment:
+      # Override this with a real random token in production.
+      SAP_BDC_TOKEN: ${SAP_BDC_TOKEN:-changeme}
+      # Must be the externally-reachable URL — used to build signed
+      # Parquet file URLs that Databricks UC will fetch.
+      HOST: ${HOST:-http://localhost:8000}
+      DATA_DIR: /data
+    volumes:
+      # Persist generated tables across container restarts.
+      - sap-bdc-data:/data
+    restart: unless-stopped
+
+volumes:
+  sap-bdc-data:
