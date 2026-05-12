@@ -87,6 +87,24 @@ def sharing_status(request: Request) -> dict:
     }
 
 
+# Bulk endpoints MUST come before the parameterized `/sharing/{table}`,
+# otherwise FastAPI matches them against {table} and demands the JSON body
+# the per-table endpoint requires, returning 422.
+@router.post("/sharing/enable-all")
+def sharing_enable_all(request: Request) -> dict:
+    s = _settings(request)
+    names = list_table_names(s)
+    visibility.enable_all(s, names)
+    return {"enabled": names}
+
+
+@router.post("/sharing/disable-all")
+def sharing_disable_all(request: Request) -> dict:
+    s = _settings(request)
+    visibility.disable_all(s)
+    return {"enabled": []}
+
+
 @router.post("/sharing/{table}")
 def sharing_set(table: str, body: SharingToggle, request: Request) -> dict:
     s = _settings(request)
@@ -101,18 +119,3 @@ def sharing_set(table: str, body: SharingToggle, request: Request) -> dict:
     else:
         visibility.disable(s, canonical)
     return {"name": canonical, "enabled": body.enabled}
-
-
-@router.post("/sharing/enable-all")
-def sharing_enable_all(request: Request) -> dict:
-    s = _settings(request)
-    names = list_table_names(s)
-    visibility.enable_all(s, names)
-    return {"enabled": names}
-
-
-@router.post("/sharing/disable-all")
-def sharing_disable_all(request: Request) -> dict:
-    s = _settings(request)
-    visibility.disable_all(s)
-    return {"enabled": []}
