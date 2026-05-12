@@ -1,45 +1,36 @@
-# sap-bdc as a standalone Delta Sharing server with auto-HTTPS via Caddy.
+# sap-bdc as a standalone Delta Sharing server.
 #
-#   docker compose up --build -d
+# Designed for setups where TLS termination + public DNS happen upstream
+# (e.g. external Nginx reverse proxy via WireGuard). This compose only
+# exposes plain HTTP on port 8000 — secure it at the upstream layer.
 #
 # Required env vars (in .env or exported):
-#   SAP_BDC_TOKEN  — random bearer token for Delta Sharing clients
-#   PUBLIC_HOST    — your domain, e.g. sap-bdc.example.com (no scheme)
-#   ACME_EMAIL     — email for Let's Encrypt expiry notices
+#   SAP_BDC_TOKEN   — random bearer token for Delta Sharing clients
+#   PUBLIC_HOST     — full URL the world sees, e.g. https://sap-bdc.example.com
+#                     (this is what Databricks UC reads from profile.json)
+#
+# Run:    docker compose up --build -d
+# Logs:   docker compose logs -f
+# Stop:   docker compose down
 
 services:
   sap-bdc:
     build: .
     container_name: sap-bdc
-    expose:
-      - "8000"
+    ports:
+      # Bind to all interfaces so WireGuard peers can reach it.
+      # If you want to restrict to WireGuard only, use:
+      #   - "10.x.x.x:8000:8000"   (the VPS's wireguard IP)
+      - "8000:8000"
     environment:
       SAP_BDC_TOKEN: ${SAP_BDC_TOKEN}
-      # HOST must match the public URL so signed parquet URLs work
-      HOST: https://${PUBLIC_HOST}
+      # HOST must be the externally-reachable URL — used to build signed
+      # Parquet file URLs that Databricks UC will fetch.
+      HOST: ${PUBLIC_HOST}
       DATA_DIR: /data
     volumes:
       - sap-bdc-data:/data
     restart: unless-stopped
 
-  caddy:
-    image: caddy:2-alpine
-    container_name: sap-bdc-caddy
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      PUBLIC_HOST: ${PUBLIC_HOST}
-      ACME_EMAIL: ${ACME_EMAIL}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    depends_on:
-      - sap-bdc
-    restart: unless-stopped
-
 volumes:
   sap-bdc-data:
-  caddy-data:
-  caddy-config:
