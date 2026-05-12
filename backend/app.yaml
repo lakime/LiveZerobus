@@ -57,3 +57,11 @@ env:
     value: databricks-meta-llama-3-3-70b-instruct
   - name: BUDGET_MONTHLY_USD
     value: "25000"
+  # SAP BDC integration — backend queries the Delta-Shared catalog
+  # mounted in UC. Leave SAP_BDC_WAREHOUSE_ID empty to disable the tab.
+  - name: SAP_BDC_WAREHOUSE_ID
+    value: "6a1fb3b32b00f1cd"
+  - name: SAP_BDC_CATALOG
+    value: sapsofts
+  - name: SAP_BDC_SCHEMA
+    value: procurement
