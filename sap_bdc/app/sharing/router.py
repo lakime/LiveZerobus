@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse
 
 from ..config import Settings
 from ..delta_store import (
@@ -178,15 +178,12 @@ def serve_file(table: str, token: str, filename: str, request: Request):
     if matched is None or not matched.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
-    def _stream():
-        with open(matched, "rb") as fh:
-            while chunk := fh.read(65536):
-                yield chunk
-
-    return StreamingResponse(
-        _stream(),
+    # FileResponse sets Content-Length automatically — required by Databricks
+    # UC's Apache HttpClient (chunked transfer encoding gets rejected).
+    return FileResponse(
+        str(matched),
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        filename=filename,
     )
 
 
