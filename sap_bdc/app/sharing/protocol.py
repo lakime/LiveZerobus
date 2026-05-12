@@ -13,6 +13,8 @@ def metadata_line(meta: dict[str, Any]) -> str:
 
 
 def file_line(url: str, file_id: str, size: int, num_records: int) -> str:
+    # Avoid including optional fields with null values — some Delta Sharing
+    # clients (Databricks UC) reject the response if `timestamp` is null.
     return json.dumps({
         "file": {
             "url": url,
@@ -20,8 +22,6 @@ def file_line(url: str, file_id: str, size: int, num_records: int) -> str:
             "partitionValues": {},
             "size": size,
             "stats": json.dumps({"numRecords": num_records}),
-            "version": 0,
-            "timestamp": None,
         }
     })
 

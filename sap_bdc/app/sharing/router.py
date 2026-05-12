@@ -78,6 +78,21 @@ def list_tables(share: str, schema: str, request: Request):
     return {"items": items, "nextPageToken": None}
 
 
+@router.get("/shares/{share}/all-tables")
+def list_all_tables(share: str, request: Request):
+    """Delta Sharing v1: lists all tables across all schemas in a share."""
+    _auth(request)
+    s = _settings(request)
+    _assert_share(share, s)
+    names = list_table_names(s)
+    items = [
+        {"name": name, "schema": s.schema_name, "share": s.share_name,
+         "id": _table_id(name), "shareId": SHARE_ID}
+        for name in names
+    ]
+    return {"items": items, "nextPageToken": None}
+
+
 @router.get("/shares/{share}/schemas/{schema}/tables/{table}/version")
 def table_ver(share: str, schema: str, table: str, request: Request):
     _auth(request)
@@ -183,3 +198,10 @@ def _assert_table(table: str, s: Settings) -> None:
 
 def _table_id(name: str) -> str:
     return hashlib.md5(name.encode()).hexdigest()
+
+
+# Catch-all for any unknown /delta-sharing/* path so clients always get
+# a proper JSON 404 instead of the React SPA's HTML.
+@router.get("/{rest:path}", include_in_schema=False)
+def sharing_not_found(rest: str):
+    raise HTTPException(status_code=404, detail=f"Unknown Delta Sharing endpoint: /{rest}")
