@@ -106,10 +106,10 @@ def table_ver(share: str, schema: str, table: str, request: Request):
     s = _settings(request)
     _assert_share(share, s)
     _assert_schema(schema, s)
-    _assert_table(table, s)
+    actual = _assert_table(table, s)
     return Response(
         content="",
-        headers={"Delta-Table-Version": str(table_version(s, table))},
+        headers={"Delta-Table-Version": str(table_version(s, actual))},
     )
 
 
@@ -119,12 +119,12 @@ def table_meta(share: str, schema: str, table: str, request: Request):
     s = _settings(request)
     _assert_share(share, s)
     _assert_schema(schema, s)
-    _assert_table(table, s)
-    meta = table_metadata(s, table)
+    actual = _assert_table(table, s)
+    meta = table_metadata(s, actual)
     body = ndjson(PROTOCOL_LINE, metadata_line(meta))
     return Response(
         content=body, media_type=NDJSON,
-        headers={"Delta-Table-Version": str(table_version(s, table))},
+        headers={"Delta-Table-Version": str(table_version(s, actual))},
     )
 
 
@@ -134,23 +134,23 @@ def query_table(share: str, schema: str, table: str, request: Request):
     s = _settings(request)
     _assert_share(share, s)
     _assert_schema(schema, s)
-    _assert_table(table, s)
+    actual = _assert_table(table, s)
 
-    meta = table_metadata(s, table)
-    files = table_files(s, table)
+    meta = table_metadata(s, actual)
+    files = table_files(s, actual)
 
     lines = [PROTOCOL_LINE, metadata_line(meta)]
     for f in files:
         basename = Path(f["path"]).name
-        token = sign_file_token(s.token, table, basename)
-        url = f"{s.host}/delta-sharing/files/{table}/{token}/{basename}"
-        fid = _stable_uuid(f"file:{table}:{f['path']}")
+        token = sign_file_token(s.token, actual, basename)
+        url = f"{s.host}/delta-sharing/files/{actual}/{token}/{basename}"
+        fid = _stable_uuid(f"file:{actual}:{f['path']}")
         lines.append(file_line(url, fid, f["size"], f["num_records"]))
 
     body = ndjson(*lines)
     return Response(
         content=body, media_type=NDJSON,
-        headers={"Delta-Table-Version": str(table_version(s, table))},
+        headers={"Delta-Table-Version": str(table_version(s, actual))},
     )
 
 
@@ -163,8 +163,13 @@ def serve_file(table: str, token: str, filename: str, request: Request):
     if not verify_file_token(s.token, token, table, filename):
         raise HTTPException(status_code=403, detail="Invalid or expired file token")
 
-    # Walk all parquet files in the table directory to find the matching one.
-    table_dir = s.data_dir / table
+    # Find the real (case-correct) directory for this table.
+    try:
+        actual_table = _resolve_table(table, s)
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    table_dir = s.data_dir / actual_table
     matched: Path | None = None
     for p in table_dir.rglob("*.parquet"):
         if p.name == filename:
@@ -197,10 +202,19 @@ def _assert_schema(schema: str, s: Settings) -> None:
         raise HTTPException(status_code=404, detail=f"Schema '{schema}' not found")
 
 
-def _assert_table(table: str, s: Settings) -> None:
+def _resolve_table(table: str, s: Settings) -> str:
+    """Case-insensitive table lookup — Databricks UC lowercases names so
+    `ekko` must resolve to the actual stored directory `EKKO`."""
     tables = list_table_names(s)
-    if table not in tables:
-        raise HTTPException(status_code=404, detail=f"Table '{table}' not found")
+    target = table.lower()
+    for t in tables:
+        if t.lower() == target:
+            return t
+    raise HTTPException(status_code=404, detail=f"Table '{table}' not found")
+
+
+def _assert_table(table: str, s: Settings) -> str:
+    return _resolve_table(table, s)
 
 
 def _table_id(name: str) -> str:
