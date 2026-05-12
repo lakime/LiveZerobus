@@ -162,6 +162,7 @@ def serve_file(table: str, token: str, filename: str, request: Request):
     s = _settings(request)
     # File tokens are self-authenticating (HMAC-signed), no bearer needed here.
     if not verify_file_token(s.token, token, table, filename):
+        log.warning("file-token-invalid-or-expired: table=%r filename=%r", table, filename)
         raise HTTPException(status_code=403, detail="Invalid or expired file token")
 
     # _resolve_table enforces visibility. A token issued before the table
@@ -178,6 +179,7 @@ def serve_file(table: str, token: str, filename: str, request: Request):
             matched = p
             break
     if matched is None or not matched.exists():
+        log.warning("file-not-found: table=%r filename=%r", actual_table, filename)
         raise HTTPException(status_code=404, detail="File not found")
 
     # FileResponse sets Content-Length automatically — required by Databricks
@@ -212,8 +214,10 @@ def _resolve_table(table: str, s: Settings) -> str:
     for t in tables:
         if t.lower() == target:
             if not is_shared(s, t):
+                log.warning("table-not-shared lookup: client asked for %r (resolved to %r) but it is disabled", table, t)
                 raise HTTPException(status_code=404, detail=f"Table '{table}' not found")
             return t
+    log.warning("table-not-found lookup: client asked for %r; on disk: %s", table, sorted(tables))
     raise HTTPException(status_code=404, detail=f"Table '{table}' not found")
 
 
@@ -229,4 +233,5 @@ def _table_id(name: str) -> str:
 # a proper JSON 404 instead of the React SPA's HTML.
 @router.get("/{rest:path}", include_in_schema=False)
 def sharing_not_found(rest: str):
+    log.warning("unknown-delta-sharing-path: GET /%s", rest)
     raise HTTPException(status_code=404, detail=f"Unknown Delta Sharing endpoint: /{rest}")

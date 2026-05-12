@@ -3,22 +3,27 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from typing import Optional
 
 from fastapi import HTTPException, Request
 
+log = logging.getLogger(__name__)
+
 
 def verify_bearer(request: Request, token: str) -> None:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
+        log.warning("bearer-missing: path=%s", request.url.path)
         raise HTTPException(status_code=401, detail="Missing bearer token")
     if not hmac.compare_digest(auth[7:], token):
+        log.warning("bearer-invalid: path=%s", request.url.path)
         raise HTTPException(status_code=403, detail="Invalid token")
 
 
-def sign_file_token(secret: str, table: str, filename: str, ttl_s: int = 3600) -> str:
+def sign_file_token(secret: str, table: str, filename: str, ttl_s: int = 86400) -> str:
     expiry = int(time.time()) + ttl_s
     payload = f"{table}|{filename}|{expiry}"
     sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
