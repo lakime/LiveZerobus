@@ -39,8 +39,14 @@ TABLES = [
 ]
 
 
-def run(sql: str, retries: int = 5, sleep: float = 2.0) -> dict:
-    """Execute a SQL statement, retrying on UC's intermittent RPC failures."""
+def run(sql: str, retries: int = 12, sleep: float = 3.0) -> dict:
+    """Execute a SQL statement, retrying on UC's intermittent RPC failures.
+
+    UC's Delta Sharing connector has a known flaky internal RPC that
+    randomly fails with RESOURCE_DOES_NOT_EXIST / TABLE_DOES_NOT_EXIST
+    even when the upstream sharing server returns 200. Empirically, all
+    statements eventually succeed within ~10 attempts.
+    """
     last_err = ""
     for attempt in range(1, retries + 1):
         req = urllib.request.Request(
@@ -57,7 +63,7 @@ def run(sql: str, retries: int = 5, sleep: float = 2.0) -> dict:
             return r
         last_err = r.get("status", {}).get("error", {}).get("message", "")[:200]
         # Don't bother retrying real syntax/permission errors.
-        if any(s in last_err for s in ["PERMISSION_DENIED", "SYNTAX_ERROR", "UNAUTHORIZED"]):
+        if any(s in last_err for s in ["PERMISSION_DENIED", "SYNTAX_ERROR", "UNAUTHORIZED", "INVALID_SHARE"]):
             break
         print(f"   ⚠  attempt {attempt}/{retries} failed: {last_err[:120]}", file=sys.stderr)
         time.sleep(sleep)
@@ -82,7 +88,7 @@ def main() -> int:
     successes, failures = [], []
     for t in TABLES:
         try:
-            run(f"DESCRIBE TABLE {CATALOG}.{SCHEMA}.{t}", retries=5, sleep=2.0)
+            run(f"DESCRIBE TABLE {CATALOG}.{SCHEMA}.{t}")
             successes.append(t)
             print(f"  ✓ {t}")
         except Exception as e:
