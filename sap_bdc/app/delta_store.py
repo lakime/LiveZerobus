@@ -62,17 +62,30 @@ def table_metadata(settings: Settings, name: str) -> dict[str, Any]:
     if not p.exists():
         return {}
     schema = pq.read_schema(p)
-    pmeta = pq.read_metadata(p)
-    fields = [
-        {"name": f.name, "type": _arrow_to_delta_type(f.type),
-         "nullable": True, "metadata": {}}
-        for f in schema
-    ]
-    # Optional fields populated for richer Catalog Explorer display.
-    # `name` shows in the catalog header; `size` and `numFiles` populate
-    # the overview / stats pane. UC's SQL engine ignores these but its
-    # Catalog UI uses them.
-    return {
+
+    # Optional table/column descriptions — show in Catalog Explorer's
+    # Overview pane. Import lazily so this module stays generic enough
+    # to be reused; a missing module just means no descriptions.
+    try:
+        from .sap_dict import table_description, field_comment
+    except Exception:
+        def table_description(_n: str): return None
+        def field_comment(_n: str): return None
+
+    fields = []
+    for f in schema:
+        field_meta = {}
+        cmt = field_comment(f.name)
+        if cmt:
+            field_meta["comment"] = cmt
+        fields.append({
+            "name": f.name,
+            "type": _arrow_to_delta_type(f.type),
+            "nullable": bool(f.nullable),
+            "metadata": field_meta,
+        })
+
+    meta: dict[str, Any] = {
         "id": str(uuid.UUID(bytes=hashlib.md5(name.encode()).digest())),
         "name": name,
         "format": {"provider": "parquet", "options": {}},
@@ -82,6 +95,10 @@ def table_metadata(settings: Settings, name: str) -> dict[str, Any]:
         "size": p.stat().st_size,
         "numFiles": 1,
     }
+    desc = table_description(name)
+    if desc:
+        meta["description"] = desc
+    return meta
 
 
 def list_table_names(settings: Settings) -> list[str]:

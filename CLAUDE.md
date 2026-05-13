@@ -335,7 +335,8 @@ Replace these layers; the protocol code stays as-is:
 1. `app/generator/` — generators that produce pandas DataFrames per table
 2. `app/config.py` — `share_name` and `schema_name` properties
 3. `app/routes/tables.py` table descriptions / module codes for the GUI
-4. Frontend `App.tsx` t-codes and labels
+4. `app/sap_dict.py` (or rename) — table-level descriptions + per-column comments that show in Databricks Catalog Explorer's Overview pane
+5. Frontend `App.tsx` t-codes and labels
 
 Everything in `app/sharing/`, `app/delta_store.py`, the Dockerfile, and the nginx config is data-domain-agnostic.
 
