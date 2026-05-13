@@ -35,6 +35,11 @@ PG_SCHEMA = os.environ.get("PG_SCHEMA", "procurement")
 LAKEBASE_PROJECT = os.environ.get("LAKEBASE_PROJECT", "myzerobus")
 LAKEBASE_BRANCH = os.environ.get("LAKEBASE_BRANCH", "production")
 LAKEBASE_ENDPOINT = os.environ.get("LAKEBASE_ENDPOINT", "primary")
+# The livezerobus app SP — grant it full access on all tables in the schema
+# so future tables created here are visible to the app.
+APP_SP_UUID = os.environ.get(
+    "LIVEZEROBUS_SP", "c4352007-a55b-4da5-b5c9-f4c8df89e58a"
+)
 
 
 def mint_token() -> str:
@@ -73,6 +78,23 @@ def main() -> int:
     ) as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
+            # Grant access to the livezerobus app SP so it can SELECT/INSERT
+            # against the tables we just created. Without this, the SP
+            # gets `relation "procurement.po_drafts" does not exist`
+            # because Postgres hides tables a role can't access.
+            print(f"Granting access to app SP {APP_SP_UUID} …")
+            cur.execute(f'GRANT USAGE ON SCHEMA {PG_SCHEMA} TO "{APP_SP_UUID}"')
+            cur.execute(f'GRANT ALL ON ALL TABLES IN SCHEMA {PG_SCHEMA} TO "{APP_SP_UUID}"')
+            cur.execute(f'GRANT ALL ON ALL SEQUENCES IN SCHEMA {PG_SCHEMA} TO "{APP_SP_UUID}"')
+            # Future tables created in this schema inherit the same grants.
+            cur.execute(
+                f'ALTER DEFAULT PRIVILEGES IN SCHEMA {PG_SCHEMA} '
+                f'GRANT ALL ON TABLES TO "{APP_SP_UUID}"'
+            )
+            cur.execute(
+                f'ALTER DEFAULT PRIVILEGES IN SCHEMA {PG_SCHEMA} '
+                f'GRANT ALL ON SEQUENCES TO "{APP_SP_UUID}"'
+            )
         conn.commit()
     print("OK")
 
