@@ -298,6 +298,20 @@ export const api = {
       tables?: string[];
     }>("/api/sap-bdc/info"),
 
+  sapBdcSyncStart: () => postJSON<{ started: boolean }>("/api/sap-bdc/sync"),
+  sapBdcSyncStatus: () =>
+    getJSON<{
+      running: boolean;
+      stage: string;
+      started_at: string | null;
+      finished_at: string | null;
+      current_table: string | null;
+      succeeded: string[];
+      failed: { table: string; error: string }[];
+      total_tables: number;
+      log: string[];
+    }>("/api/sap-bdc/sync/status"),
+
   sapBdcVendors: (q = "", limit = 100) =>
     getJSON<SapBdcVendor[]>(
       `/api/sap-bdc/vendors?q=${encodeURIComponent(q)}&limit=${limit}`,

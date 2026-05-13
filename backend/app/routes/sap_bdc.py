@@ -3,6 +3,9 @@ the SQL warehouse. Disabled gracefully if SAP_BDC_WAREHOUSE_ID is unset."""
 from __future__ import annotations
 
 import logging
+import threading
+import time
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,6 +16,13 @@ from ..warehouse import WarehouseNotConfigured, catalog_available, execute
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sap-bdc", tags=["sap-bdc"])
 
+# 15 SAP tables exposed by the BDC share. Order matches the BDC service.
+SAP_TABLES = [
+    "bkpf", "eban", "ekbe", "eket", "ekko", "ekpo",
+    "lfa1", "mara", "mkpf", "mseg", "rbkp",
+    "t001", "t001w", "t023", "t024",
+]
+
 
 def get_settings() -> Settings:
     return Settings.from_env()
@@ -20,6 +30,129 @@ def get_settings() -> Settings:
 
 def _qualify(settings: Settings, table: str) -> str:
     return f"`{settings.sap_bdc_catalog}`.`{settings.sap_bdc_schema}`.`{table}`"
+
+
+# ── Sync state ──────────────────────────────────────────────────────────────
+# Single global state — the livezerobus backend is single-instance.
+
+_sync_lock = threading.Lock()
+_sync_state: dict[str, Any] = {
+    "running": False,
+    "stage": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "current_table": None,
+    "succeeded": [],
+    "failed": [],
+    "total_tables": len(SAP_TABLES),
+    "log": [],
+}
+
+
+def _log(msg: str) -> None:
+    ts = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    log.info("[sync] %s", msg)
+    _sync_state["log"].append(f"{ts}  {msg}")
+    if len(_sync_state["log"]) > 200:
+        _sync_state["log"] = _sync_state["log"][-200:]
+
+
+def _execute_with_retry(settings: Settings, sql: str, retries: int = 12, sleep: float = 3.0) -> None:
+    """Execute a statement with retries — UC's Delta Sharing connector
+    has intermittent RPC failures we need to ride out."""
+    last_err = ""
+    for attempt in range(1, retries + 1):
+        try:
+            execute(settings, sql)
+            return
+        except Exception as e:
+            last_err = str(e)
+            if any(s in last_err for s in ["PERMISSION_DENIED", "SYNTAX_ERROR", "UNAUTHORIZED", "INVALID_SHARE"]):
+                raise
+            _log(f"  attempt {attempt}/{retries} failed: {last_err[:120]}")
+            time.sleep(sleep)
+    raise RuntimeError(f"Statement failed after {retries} retries: {sql} — {last_err[:200]}")
+
+
+def _do_sync(settings: Settings) -> None:
+    """Background worker: drop + recreate catalog + warm every table."""
+    cat = settings.sap_bdc_catalog
+    sch = settings.sap_bdc_schema
+    try:
+        with _sync_lock:
+            _sync_state["running"] = True
+            _sync_state["stage"] = "starting"
+            _sync_state["started_at"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+            _sync_state["finished_at"] = None
+            _sync_state["current_table"] = None
+            _sync_state["succeeded"] = []
+            _sync_state["failed"] = []
+            _sync_state["log"] = []
+
+        _log(f"Refreshing {cat}.{sch}")
+
+        _sync_state["stage"] = "drop_catalog"
+        _log("DROP CATALOG …")
+        _execute_with_retry(settings, f"DROP CATALOG IF EXISTS {cat} CASCADE")
+
+        _sync_state["stage"] = "create_catalog"
+        _log("CREATE CATALOG …")
+        _execute_with_retry(settings, f"CREATE CATALOG {cat} USING SHARE `sapsofts`.`sap-procurement`")
+
+        _sync_state["stage"] = "materialise_schema"
+        _log("SHOW SCHEMAS / SHOW TABLES …")
+        _execute_with_retry(settings, f"SHOW SCHEMAS IN {cat}")
+        _execute_with_retry(settings, f"SHOW TABLES IN {cat}.{sch}")
+
+        _sync_state["stage"] = "warm_tables"
+        for t in SAP_TABLES:
+            _sync_state["current_table"] = t
+            _log(f"warming {t} …")
+            try:
+                _execute_with_retry(settings, f"DESCRIBE TABLE {cat}.{sch}.{t}")
+                _sync_state["succeeded"].append(t)
+                _log(f"  ✓ {t}")
+            except Exception as e:
+                _sync_state["failed"].append({"table": t, "error": str(e)[:200]})
+                _log(f"  ✗ {t}: {e}")
+
+        _sync_state["current_table"] = None
+        _sync_state["stage"] = "completed" if not _sync_state["failed"] else "completed_with_errors"
+        _log(f"Done — {len(_sync_state['succeeded'])}/{len(SAP_TABLES)} tables warmed")
+    except Exception as e:
+        _sync_state["stage"] = "failed"
+        _log(f"FATAL: {e}")
+    finally:
+        with _sync_lock:
+            _sync_state["running"] = False
+            _sync_state["finished_at"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+
+# ── Sync endpoints ──────────────────────────────────────────────────────────
+
+@router.post("/sync")
+def start_sync(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    """Trigger a catalog refresh in the background.
+
+    Returns immediately; clients should poll /api/sap-bdc/sync/status to
+    watch progress.
+    """
+    if not settings.sap_bdc_warehouse_id:
+        raise HTTPException(503, detail="SAP_BDC_WAREHOUSE_ID not configured")
+    with _sync_lock:
+        if _sync_state["running"]:
+            raise HTTPException(409, detail="A sync is already running")
+    threading.Thread(target=_do_sync, args=(settings,), daemon=True).start()
+    return {"started": True}
+
+
+@router.get("/sync/status")
+def sync_status() -> dict[str, Any]:
+    """Current state of the sync worker."""
+    # Return a shallow copy — lists are still references but for read-only
+    # use this is fine; lifetime of the response is short.
+    with _sync_lock:
+        return dict(_sync_state)
 
 
 # ── Status / info ───────────────────────────────────────────────────────────
