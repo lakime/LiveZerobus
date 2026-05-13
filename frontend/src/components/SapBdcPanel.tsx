@@ -3,6 +3,14 @@ import { api, SapBdcPoLine, SapBdcVendor } from "../api";
 
 type Sub = "overview" | "vendors" | "purchase-orders";
 
+// SQL warehouse REST returns every value as a string. Defensively coerce
+// to Number before formatting; show em-dash for null/empty/NaN.
+function fmtNum(v: number | string | null | undefined, decimals = 2): string {
+  if (v === null || v === undefined || v === "") return "—";
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n.toFixed(decimals) : String(v);
+}
+
 export default function SapBdcPanel() {
   const [sub, setSub] = useState<Sub>("overview");
   const [info, setInfo] = useState<{
@@ -403,15 +411,15 @@ function PurchaseOrders() {
               <td style={{ fontFamily: "monospace" }}>{r.material}</td>
               <td className="muted">{r.plant}</td>
               <td style={{ textAlign: "right", fontFamily: "monospace" }}>
-                {r.quantity?.toLocaleString()}
+                {fmtNum(r.quantity, 3)}
               </td>
               <td className="muted">{r.uom}</td>
               <td style={{ textAlign: "right", fontFamily: "monospace" }}>
-                {r.net_price?.toFixed(2)}
+                {fmtNum(r.net_price, 2)}
               </td>
               <td className="muted">{r.currency}</td>
               <td style={{ textAlign: "right", fontFamily: "monospace" }}>
-                {r.net_value?.toFixed(2)}
+                {fmtNum(r.net_value, 2)}
               </td>
               <td className="muted">{r.po_date}</td>
               <td className="muted">{r.delivery_date}</td>
