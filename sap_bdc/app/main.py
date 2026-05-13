@@ -56,6 +56,12 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     log.info("SAP BDC service starting — host=%s data_dir=%s", settings.host, settings.data_dir)
     generate_all(settings)
+    # First-run bootstrap so a fresh deploy doesn't surface an empty share
+    # to Databricks UC. Existing operator choices are preserved.
+    from .delta_store import list_table_names
+    from .sharing import visibility
+    if visibility.bootstrap_if_missing(settings, list_table_names(settings)):
+        log.info("Sharing state initialized: all tables enabled by default")
     yield
     log.info("SAP BDC service stopped")
 

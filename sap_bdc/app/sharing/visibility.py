@@ -85,3 +85,18 @@ def enable_all(settings: Settings, all_table_names: list[str]) -> None:
 def disable_all(settings: Settings) -> None:
     with _LOCK:
         _save(settings, set())
+
+
+def bootstrap_if_missing(settings: Settings, all_table_names: list[str]) -> bool:
+    """First-run bootstrap: if no state file exists yet, seed with all
+    tables enabled. Returns True iff bootstrap actually ran.
+
+    Once the file exists (even containing an empty enabled list from an
+    explicit disable-all), this becomes a no-op — operator choices are
+    preserved across restarts.
+    """
+    with _LOCK:
+        if _path(settings).exists() or not all_table_names:
+            return False
+        _save(settings, set(all_table_names))
+        return True
