@@ -62,17 +62,25 @@ def table_metadata(settings: Settings, name: str) -> dict[str, Any]:
     if not p.exists():
         return {}
     schema = pq.read_schema(p)
+    pmeta = pq.read_metadata(p)
     fields = [
         {"name": f.name, "type": _arrow_to_delta_type(f.type),
          "nullable": True, "metadata": {}}
         for f in schema
     ]
+    # Optional fields populated for richer Catalog Explorer display.
+    # `name` shows in the catalog header; `size` and `numFiles` populate
+    # the overview / stats pane. UC's SQL engine ignores these but its
+    # Catalog UI uses them.
     return {
         "id": str(uuid.UUID(bytes=hashlib.md5(name.encode()).digest())),
+        "name": name,
         "format": {"provider": "parquet", "options": {}},
         "schemaString": json.dumps({"type": "struct", "fields": fields}),
         "partitionColumns": [],
         "configuration": {},
+        "size": p.stat().st_size,
+        "numFiles": 1,
     }
 
 
@@ -105,9 +113,23 @@ def table_row_count(settings: Settings, name: str) -> int:
 
 
 def _arrow_to_delta_type(t: pa.DataType) -> str:
-    if pa.types.is_int64(t) or pa.types.is_int32(t) or pa.types.is_int16(t) or pa.types.is_int8(t):
+    """Map pyarrow types → Delta Lake schema type strings.
+
+    Delta primitive type names (per the Delta Sharing v1 spec) are narrower
+    than `long` / `double` — Catalog Explorer uses these to render column
+    badges and may reject responses that overstate widths.
+    """
+    if pa.types.is_int8(t):
+        return "byte"
+    if pa.types.is_int16(t):
+        return "short"
+    if pa.types.is_int32(t):
+        return "integer"
+    if pa.types.is_int64(t):
         return "long"
-    if pa.types.is_float64(t) or pa.types.is_float32(t):
+    if pa.types.is_float32(t):
+        return "float"
+    if pa.types.is_float64(t):
         return "double"
     if pa.types.is_boolean(t):
         return "boolean"
@@ -115,4 +137,6 @@ def _arrow_to_delta_type(t: pa.DataType) -> str:
         return "date"
     if pa.types.is_timestamp(t):
         return "timestamp"
+    if pa.types.is_binary(t):
+        return "binary"
     return "string"
