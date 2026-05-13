@@ -44,14 +44,14 @@ def _auth(request: Request) -> None:
 
 # ── Shares ────────────────────────────────────────────────────────────────────
 
-@router.get("/shares")
+@router.api_route(methods=["GET", "HEAD"], path="/shares")
 def list_shares(request: Request):
     _auth(request)
     s = _settings(request)
     return {"items": [{"name": s.share_name, "id": SHARE_ID}], "nextPageToken": None}
 
 
-@router.get("/shares/{share}")
+@router.api_route(methods=["GET", "HEAD"], path="/shares/{share}")
 def get_share(share: str, request: Request):
     _auth(request)
     s = _settings(request)
@@ -61,7 +61,7 @@ def get_share(share: str, request: Request):
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
-@router.get("/shares/{share}/schemas")
+@router.api_route(methods=["GET", "HEAD"], path="/shares/{share}/schemas")
 def list_schemas(share: str, request: Request):
     _auth(request)
     s = _settings(request)
@@ -71,7 +71,7 @@ def list_schemas(share: str, request: Request):
 
 # ── Tables ────────────────────────────────────────────────────────────────────
 
-@router.get("/shares/{share}/schemas/{schema}/tables")
+@router.api_route(methods=["GET", "HEAD"], path="/shares/{share}/schemas/{schema}/tables")
 def list_tables(share: str, schema: str, request: Request):
     _auth(request)
     s = _settings(request)
@@ -86,7 +86,7 @@ def list_tables(share: str, schema: str, request: Request):
     return {"items": items, "nextPageToken": None}
 
 
-@router.get("/shares/{share}/all-tables")
+@router.api_route(methods=["GET", "HEAD"], path="/shares/{share}/all-tables")
 def list_all_tables(share: str, request: Request):
     """Delta Sharing v1: lists all tables across all schemas in a share."""
     _auth(request)
@@ -101,7 +101,7 @@ def list_all_tables(share: str, request: Request):
     return {"items": items, "nextPageToken": None}
 
 
-@router.get("/shares/{share}/schemas/{schema}/tables/{table}/version")
+@router.api_route(methods=["GET", "HEAD"], path="/shares/{share}/schemas/{schema}/tables/{table}/version")
 def table_ver(share: str, schema: str, table: str, request: Request):
     _auth(request)
     s = _settings(request)
@@ -114,7 +114,7 @@ def table_ver(share: str, schema: str, table: str, request: Request):
     )
 
 
-@router.get("/shares/{share}/schemas/{schema}/tables/{table}/metadata")
+@router.api_route(methods=["GET", "HEAD"], path="/shares/{share}/schemas/{schema}/tables/{table}/metadata")
 def table_meta(share: str, schema: str, table: str, request: Request):
     _auth(request)
     s = _settings(request)
@@ -231,7 +231,7 @@ def _table_id(name: str) -> str:
 
 # Catch-all for any unknown /delta-sharing/* path so clients always get
 # a proper JSON 404 instead of the React SPA's HTML.
-@router.get("/{rest:path}", include_in_schema=False)
+@router.api_route(methods=["GET", "HEAD"], path="/{rest:path}", include_in_schema=False)
 def sharing_not_found(rest: str):
     log.warning("unknown-delta-sharing-path: GET /%s", rest)
     raise HTTPException(status_code=404, detail=f"Unknown Delta Sharing endpoint: /{rest}")
