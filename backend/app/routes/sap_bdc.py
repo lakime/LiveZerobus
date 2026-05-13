@@ -58,20 +58,32 @@ def _log(msg: str) -> None:
 
 
 def _execute_with_retry(settings: Settings, sql: str, retries: int = 12, sleep: float = 3.0) -> None:
-    """Execute a statement with retries — UC's Delta Sharing connector
-    has intermittent RPC failures we need to ride out."""
+    """Execute a statement with retries (no result) — UC's Delta Sharing
+    connector has intermittent RPC failures we need to ride out."""
+    _execute_with_retry_returning(settings, sql, retries=retries, sleep=sleep, parameters=None)
+
+
+def _execute_with_retry_returning(
+    settings: Settings,
+    sql: str,
+    retries: int = 5,
+    sleep: float = 1.5,
+    parameters: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Like _execute_with_retry but returns the rows; used by data endpoints
+    that need the result (vendors, purchase-orders) — fewer retries / shorter
+    sleeps so the user-facing request doesn't take ages."""
     last_err = ""
     for attempt in range(1, retries + 1):
         try:
-            execute(settings, sql)
-            return
+            return execute(settings, sql, parameters=parameters)
         except Exception as e:
             last_err = str(e)
             if any(s in last_err for s in ["PERMISSION_DENIED", "SYNTAX_ERROR", "UNAUTHORIZED", "INVALID_SHARE"]):
                 raise
-            _log(f"  attempt {attempt}/{retries} failed: {last_err[:120]}")
+            log.warning("retry %d/%d on UC flake: %s", attempt, retries, last_err[:120])
             time.sleep(sleep)
-    raise RuntimeError(f"Statement failed after {retries} retries: {sql} — {last_err[:200]}")
+    raise RuntimeError(f"Statement failed after {retries} retries: {last_err[:200]}")
 
 
 def _do_sync(settings: Settings) -> None:
@@ -211,7 +223,7 @@ def vendors(
         """
         params = [{"name": "pat", "value": f"%{q.lower()}%"}]
     try:
-        return execute(
+        return _execute_with_retry_returning(
             settings,
             f"""
             SELECT LIFNR, NAME1, LAND1, ORT01, STRAS, TELF1, SPRAS, KTOKK
@@ -242,7 +254,7 @@ def vendor_lookup(
         return {}
     lfa1 = _qualify(settings, "lfa1")
     try:
-        rows = execute(settings, f"SELECT LIFNR, NAME1 FROM {lfa1}")
+        rows = _execute_with_retry_returning(settings, f"SELECT LIFNR, NAME1 FROM {lfa1}")
         return {r["LIFNR"]: r.get("NAME1", "") for r in rows if r.get("LIFNR")}
     except Exception as e:
         log.warning("vendor-lookup failed: %s", e)
@@ -274,7 +286,7 @@ def purchase_orders(
         """
         params = [{"name": "pat", "value": f"%{q.lower()}%"}]
     try:
-        return execute(
+        return _execute_with_retry_returning(
             settings,
             f"""
             SELECT

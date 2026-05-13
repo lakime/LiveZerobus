@@ -237,11 +237,16 @@ function Vendors() {
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<SapBdcVendor[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
+    setError(null);
     try {
       setRows(await api.sapBdcVendors(q, 200));
+    } catch (e: any) {
+      setError(String(e?.message || e));
+      setRows([]);
     } finally {
       setLoading(false);
     }
@@ -265,7 +270,18 @@ function Vendors() {
           {loading ? "…" : "Search"}
         </button>
         <span className="muted small">{rows.length} rows</span>
+        {error && <span className="badge bad" title={error}>ERROR</span>}
       </div>
+      {error && (
+        <div className="muted small" style={{
+          marginBottom: 8, padding: "6px 10px",
+          background: "var(--code-bg, #fdf3f3)",
+          borderLeft: "3px solid var(--bad, #d32f2f)",
+          color: "var(--bad, #d32f2f)", fontFamily: "monospace",
+        }}>
+          {error.length > 300 ? error.slice(0, 300) + "…" : error}
+        </div>
+      )}
       <table>
         <thead>
           <tr>
@@ -300,11 +316,16 @@ function PurchaseOrders() {
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<SapBdcPoLine[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
+    setError(null);
     try {
       setRows(await api.sapBdcPurchaseOrders(q, 200));
+    } catch (e: any) {
+      setError(String(e?.message || e));
+      setRows([]);
     } finally {
       setLoading(false);
     }
@@ -328,7 +349,29 @@ function PurchaseOrders() {
           {loading ? "…" : "Search"}
         </button>
         <span className="muted small">{rows.length} lines</span>
+        {error && (
+          <span className="badge bad" title={error}>
+            ERROR
+          </span>
+        )}
       </div>
+      {error && (
+        <div
+          className="muted small"
+          style={{
+            marginBottom: 8,
+            padding: "6px 10px",
+            background: "var(--code-bg, #fdf3f3)",
+            borderLeft: "3px solid var(--bad, #d32f2f)",
+            color: "var(--bad, #d32f2f)",
+            fontFamily: "monospace",
+          }}
+        >
+          {error.length > 300 ? error.slice(0, 300) + "…" : error}
+          <br />
+          <strong>Tip:</strong> click <strong>Sync now</strong> in the Overview sub-tab to warm UC's metadata cache for all 15 tables.
+        </div>
+      )}
       <table>
         <thead>
           <tr>
