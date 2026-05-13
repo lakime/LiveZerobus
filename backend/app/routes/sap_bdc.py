@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..config import Settings
-from ..warehouse import WarehouseNotConfigured, catalog_available, execute
+from ..warehouse import WarehouseNotConfigured, execute
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sap-bdc", tags=["sap-bdc"])
@@ -209,7 +209,7 @@ def vendors(
     settings: Settings = Depends(get_settings),
 ) -> list[dict[str, Any]]:
     """Vendor master records (LFA1)."""
-    if not catalog_available(settings):
+    if not settings.sap_bdc_warehouse_id:
         return []
     lfa1 = _qualify(settings, "lfa1")
     where = ""
@@ -250,7 +250,7 @@ def vendor_lookup(
     should treat missing keys as "vendor name unknown" and fall back to the
     raw LIFNR. This keeps the SAP P2P tab functional even when BDC is offline.
     """
-    if not catalog_available(settings):
+    if not settings.sap_bdc_warehouse_id:
         return {}
     lfa1 = _qualify(settings, "lfa1")
     try:
@@ -270,7 +270,7 @@ def purchase_orders(
     settings: Settings = Depends(get_settings),
 ) -> list[dict[str, Any]]:
     """Purchase order header joined with its line items and vendor name."""
-    if not catalog_available(settings):
+    if not settings.sap_bdc_warehouse_id:
         return []
     ekko = _qualify(settings, "ekko")
     ekpo = _qualify(settings, "ekpo")
