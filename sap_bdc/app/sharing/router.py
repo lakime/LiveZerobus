@@ -157,7 +157,7 @@ def query_table(share: str, schema: str, table: str, request: Request):
 
 # ── File serving ──────────────────────────────────────────────────────────────
 
-@router.get("/files/{table}/{token}/{filename}")
+@router.api_route("/files/{table}/{token}/{filename}", methods=["GET", "HEAD"])
 def serve_file(table: str, token: str, filename: str, request: Request):
     s = _settings(request)
     # File tokens are self-authenticating (HMAC-signed), no bearer needed here.
