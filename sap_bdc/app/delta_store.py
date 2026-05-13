@@ -94,10 +94,6 @@ def table_metadata(settings: Settings, name: str) -> dict[str, Any]:
         "configuration": {},
         "size": p.stat().st_size,
         "numFiles": 1,
-        # Tell clients we only support presigned-URL access (no direct
-        # cloud-storage credentials). UC uses this to skip the
-        # /temporary-table-credentials probe.
-        "accessModes": ["url"],
     }
     desc = table_description(name)
     if desc:

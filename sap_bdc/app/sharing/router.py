@@ -22,13 +22,6 @@ router = APIRouter(tags=["delta-sharing"])
 
 NDJSON = "application/x-ndjson; charset=utf-8"
 
-# Tell clients which response format we serve. Spec calls this
-# `delta-sharing-capabilities`. Clients (UC) may send the same header
-# on request to negotiate; we always reply with `responseformat=parquet`
-# because that's the only format we produce.
-DS_CAP_HEADER = "delta-sharing-capabilities"
-DS_CAP_VALUE = "responseformat=parquet"
-
 # Delta Sharing requires entity IDs to be valid UUIDs. We derive them
 # deterministically from stable names (md5 → 16 bytes → UUID).
 def _stable_uuid(name: str) -> str:
@@ -121,21 +114,6 @@ def table_ver(share: str, schema: str, table: str, request: Request):
     )
 
 
-# Deprecated version-check endpoint per Delta Sharing protocol spec — UC
-# may HEAD-probe this path to detect whether a table exists.
-@router.api_route(methods=["GET", "HEAD"], path="/shares/{share}/schemas/{schema}/tables/{table}")
-def table_root(share: str, schema: str, table: str, request: Request):
-    _auth(request)
-    s = _settings(request)
-    _assert_share(share, s)
-    _assert_schema(schema, s)
-    actual = _assert_table(table, s)
-    return Response(
-        content="",
-        headers={"Delta-Table-Version": str(table_version(s, actual))},
-    )
-
-
 @router.api_route(methods=["GET", "HEAD"], path="/shares/{share}/schemas/{schema}/tables/{table}/metadata")
 def table_meta(share: str, schema: str, table: str, request: Request):
     _auth(request)
@@ -147,10 +125,7 @@ def table_meta(share: str, schema: str, table: str, request: Request):
     body = ndjson(PROTOCOL_LINE, metadata_line(meta))
     return Response(
         content=body, media_type=NDJSON,
-        headers={
-            "Delta-Table-Version": str(table_version(s, actual)),
-            DS_CAP_HEADER: DS_CAP_VALUE,
-        },
+        headers={"Delta-Table-Version": str(table_version(s, actual))},
     )
 
 
@@ -176,10 +151,7 @@ def query_table(share: str, schema: str, table: str, request: Request):
     body = ndjson(*lines)
     return Response(
         content=body, media_type=NDJSON,
-        headers={
-            "Delta-Table-Version": str(table_version(s, actual)),
-            DS_CAP_HEADER: DS_CAP_VALUE,
-        },
+        headers={"Delta-Table-Version": str(table_version(s, actual))},
     )
 
 
