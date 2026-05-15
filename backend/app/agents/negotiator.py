@@ -94,6 +94,14 @@ def _open_rec_needing_rfq(settings: Settings) -> dict | None:
                   r.recommended_supplier_name
              FROM procurement.procurement_recommendations r
             WHERE r.decision = 'BUY_NOW'
+              -- Defensive: never RFQ for zero quantity. The Gold MV
+              -- occasionally emits BUY_NOW with reorder_grams=0 when the
+              -- target stock math produces a non-positive delta. Skipping
+              -- those here keeps suppliers from receiving "please send me
+              -- 0g" emails.
+              AND r.reorder_grams > 0
+              AND r.packs > 0
+              AND r.recommended_supplier_id IS NOT NULL
               AND NOT EXISTS (
                 SELECT 1 FROM procurement.email_outbox o
                  WHERE o.sku = r.sku

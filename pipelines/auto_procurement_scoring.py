@@ -169,6 +169,11 @@ def gd_procurement_recommendations():
                "total_cost_usd",
                F.col("packs") * F.col("unit_price_usd"),
            )
+           # Drop rows where there's literally nothing to order — happens
+           # when on_hand_g == target_stock_g exactly at the reorder boundary
+           # or when pack_size_g > target-on_hand. Without this filter the
+           # negotiator agent ends up emailing suppliers asking for 0 g.
+           .where(F.col("packs") > 0)
     )
 
     decision = (
