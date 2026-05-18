@@ -16,10 +16,11 @@ import SapPanel from "./components/SapPanel";
 import SapBdcPanel from "./components/SapBdcPanel";
 import IotFieldsPanel from "./components/IotFieldsPanel";
 import PipelinePanel from "./components/PipelinePanel";
+import HealthPanel from "./components/HealthPanel";
 
 const REFRESH_MS = 3000;
 
-type Tab = "dashboard" | "emails" | "po" | "onboarding" | "invoices" | "runs" | "sap" | "sap-bdc" | "iot" | "pipeline";
+type Tab = "dashboard" | "emails" | "po" | "onboarding" | "invoices" | "runs" | "sap" | "sap-bdc" | "iot" | "pipeline" | "health";
 
 function RefreshBar({ onRefresh }: { onRefresh: () => void }) {
   const [lastTs, setLastTs] = useState(() => new Date());
@@ -96,6 +97,7 @@ export default function App() {
         <Tab id="sap-bdc"    on={tab} onSet={setTab}>SAP BDC</Tab>
         <Tab id="iot"        on={tab} onSet={setTab}>IoT Fields</Tab>
         <Tab id="pipeline"   on={tab} onSet={setTab}>Pipeline</Tab>
+        <Tab id="health"     on={tab} onSet={setTab}>Health</Tab>
       </nav>
 
       {tab === "dashboard" && (
@@ -213,6 +215,12 @@ export default function App() {
         <section style={{ padding:"0 0 24px" }}>
           <RefreshBar onRefresh={manualRefresh} />
           <PipelinePanel tick={tick} />
+        </section>
+      )}
+
+      {tab === "health" && (
+        <section style={{ padding:"0 0 24px" }}>
+          <HealthPanel tick={tick} />
         </section>
       )}
 

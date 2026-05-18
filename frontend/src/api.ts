@@ -324,6 +324,38 @@ export const api = {
     getJSON<SapBdcPoLine[]>(
       `/api/sap-bdc/purchase-orders?q=${encodeURIComponent(q)}&limit=${limit}`,
     ),
+
+  // Demo-day health check
+  healthStatus: () => getJSON<HealthStatus>("/api/health/status"),
+  healthRefresh: () => postJSON<{ cleared: boolean }>("/api/health/refresh"),
+  healthTriggerPipeline: () =>
+    postJSON<{ triggered: boolean; already_running: boolean; update_id: string | null; state?: string }>(
+      "/api/health/trigger-pipeline",
+    ),
+};
+
+export type HealthLayerStatus = "fresh" | "stale" | "error" | "no_data" | "disabled" | "unknown";
+
+export type HealthTable = {
+  table: string;
+  count: number | null;
+  age_min: number | null;
+  status: HealthLayerStatus;
+  error?: string;
+};
+
+export type HealthLayer = {
+  name: string;
+  status: HealthLayerStatus;
+  tables: HealthTable[];
+  table_count?: number;
+  error?: string;
+};
+
+export type HealthStatus = {
+  generated_at: string;
+  pipeline_id: string;
+  layers: HealthLayer[];
 };
 
 export type SapBdcVendor = {
