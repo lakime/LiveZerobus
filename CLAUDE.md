@@ -345,3 +345,68 @@ Everything in `app/sharing/`, `app/delta_store.py`, the Dockerfile, and the ngin
 - Lakebase Postgres auth uses OAuth tokens (not passwords); `lakebase.py` rotates them transparently via `w.postgres.generate_database_credential`.
 - Agents are tick-based: each `/api/agents/<name>/tick` call runs one agent iteration; the frontend polls on a timer.
 - Unity Catalog path: `livezerobus.procurement.*` for all Delta tables.
+
+## Demo-day operations
+
+The dashboard reads from Lakebase Postgres synced tables that depend on a chain of upstream systems:
+
+```
+simulators → Bronze (Delta) → Lakeflow pipeline → Silver → Gold (MV) → Lakebase synced (Postgres) → Dashboard
+                                ↑ auto-triggered every 10 min by sim_ui.py while running
+                                ↑ cluster cold-start takes 7-10 min if not run in last few hours
+```
+
+### Known fragilities (verified during demo prep)
+
+**1. Lakebase synced tables get stuck on stale snapshots.**
+Configured with `snapshot_interval_seconds: 30-60` (`SNAPSHOT` policy), they *should* re-snapshot from Gold automatically. In practice they lock onto an old version and stop catching up. Symptom: Dashboard panels (Grow-Input Prices / Planting / Recommendations) empty or showing days-old data even though Gold MVs are current.
+
+**Recovery**: `python scripts/reset_synced_tables.py <table-name…>` (or `--all`). The script DELETEs the UC synced object, DROPs the Postgres table, recreates the synced table (forcing a fresh initial snapshot), waits for it to land, and GRANTs access to the app SP. Tables that most commonly get stuck: `commodity_prices_latest`, `demand_1h`, `procurement_recommendations`.
+
+**2. Lakeflow pipeline cluster cold-starts take 7-10 minutes.**
+After ~24 h of inactivity, `livezerobus_procurement_sdp`'s cluster terminates. The next `start_update` sits in `WAITING_FOR_RESOURCES` for 5-10 min before transitioning to `INITIALIZING → SETTING_UP_TABLES → RUNNING`. Total time from cold trigger to fresh Gold: **~10-12 minutes**.
+
+**How to avoid during demo**: start the pipeline ~30 min before the demo (or keep `sim_ui.py` running — it auto-triggers the pipeline every 10 min, which keeps the cluster warm).
+
+**3. UC's Delta Sharing connector has intermittent RPC failures.**
+When clicking SAP BDC → Sync now (or running DESCRIBE TABLE / SELECT against `sapsofts.procurement.*`), individual queries randomly fail with `RESOURCE_DOES_NOT_EXIST` or `Forcing_invalid_json_to_fail_streaming_rpc`. The backend retries 5× with 1.5s backoff; the Sync worker retries 12× with 3s. UI shows a red error banner on final failure — clicking Sync now again typically resolves.
+
+**4. `/api/summary` 500 with `relation "procurement.po_drafts" does not exist`.**
+The agent-state tables (po_drafts, budget_ledger, email_*) live in `schemas/lakebase_schema.sql` and are not auto-applied. Run `python scripts/apply_lakebase_schema.py` once after a fresh Lakebase project deploy; it also grants the app SP access to every table.
+
+**5. Negotiator agent emails "0 g (0 packs × 5 g)".**
+Fixed in commit `28ae511` — Gold MV now filters `packs > 0` and the agent's WHERE clause does too. If the bug reappears, the agent or pipeline code regressed.
+
+### Pre-demo warm-up (run 30 min before any live demo)
+
+```bash
+# 1. Start simulators (keeps pipeline cluster warm + Bronze fresh)
+cd simulators && .venv/bin/python sim_ui.py    # browser :8765, click "Start all"
+
+# 2. Health check + auto-repair anything stale
+cd ..
+DATABRICKS_CONFIG_PROFILE=softdev python scripts/pre_demo_warmup.py --fix
+
+# 3. If --fix triggered a pipeline run, re-run in 10 min to verify Gold caught up
+DATABRICKS_CONFIG_PROFILE=softdev python scripts/pre_demo_warmup.py
+```
+
+The warmup script checks all 4 layers (Bronze / Gold / Lakebase / SAP BDC), reports red/green per component, and with `--fix` will trigger the Lakeflow pipeline, reset stuck synced tables, and warm the SAP BDC UC catalog. Output is colourized for quick scan.
+
+### During-demo monitoring
+
+Keep these open in another tab:
+
+| Window | URL / command |
+|--------|---------------|
+| Pipeline state | livezerobus app → Pipeline tab |
+| Sim emit rate | `:8765` (sim_ui) — ignore the "0 events" counter, it's a known UI bug |
+| Quick freshness check | `python scripts/pre_demo_warmup.py --quick` (no SAP BDC, runs in <10s) |
+
+### Recovery playbooks
+
+- **Dashboard panel empty**: `python scripts/reset_synced_tables.py <panel-name>` — see table → script-arg mapping in `scripts/reset_synced_tables.py` (TABLES dict).
+- **SAP BDC tab shows DISCONNECTED**: SP missing UC grants. `GRANT USE CATALOG, BROWSE ON CATALOG sapsofts TO \`c4352007-…\`; GRANT USE SCHEMA, SELECT ON SCHEMA sapsofts.procurement TO \`c4352007-…\`;` (via SQL editor).
+- **SAP BDC tab shows empty columns / red error banner**: click **Sync now** in the Overview sub-tab. Worker does DROP/CREATE CATALOG + DESCRIBE all 15 with 12× retry.
+- **All agents return ERROR**: FM_MODEL endpoint unreachable. Check the app's `FM_MODEL` env var (default `databricks-meta-llama-3-3-70b-instruct`) and that the workspace's Foundation Model API is enabled.
+- **Full reset of everything**: see `docs/TESTING.md` for the layered runbook.
