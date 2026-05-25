@@ -26,11 +26,13 @@ def info(settings: Settings = Depends(get_settings)) -> dict:
     # Databricks App and the user is OAuth-authenticated).
     base = settings.databricks_host
     space_id = settings.genie_space_id
+    # /embed/genie/rooms/{id} ships with `Content-Security-Policy:
+    # frame-ancestors *` so it's iframeable from anywhere.
+    # /genie/rooms/{id} is the full-app URL — opens fine in a new tab
+    # but is blocked from iframes by X-Frame-Options.
     return {
         "configured": True,
         "space_id": space_id,
-        # Several path forms accepted by Databricks — start with the standard
-        # space URL; if a workspace runs an older UI version, try the alt.
-        "url": f"{base}/genie/rooms/{space_id}",
-        "url_alt": f"{base}/genie/spaces/{space_id}",
+        "url": f"{base}/embed/genie/rooms/{space_id}",
+        "url_alt": f"{base}/genie/rooms/{space_id}",
     }

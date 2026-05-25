@@ -26,10 +26,14 @@ function saveLocal(cfg: SavedConfig | null) {
 }
 
 function buildUrl(host: string, space_id: string, alt = false): string {
+  // Databricks serves Genie via two routes:
+  //   /genie/rooms/{id}   → standard UI; X-Frame-Options DENY → iframe blocked
+  //   /embed/genie/rooms/{id} → embed surface; CSP frame-ancestors *
+  // Always use the /embed/ form unless the alt toggle is on (for fallback).
   const base = host.replace(/\/+$/, "");
   return alt
-    ? `${base}/genie/spaces/${space_id}`
-    : `${base}/genie/rooms/${space_id}`;
+    ? `${base}/genie/rooms/${space_id}`
+    : `${base}/embed/genie/rooms/${space_id}`;
 }
 
 export default function GeniePanel() {
@@ -96,10 +100,10 @@ export default function GeniePanel() {
           <button
             className="btn"
             style={{ padding: "3px 10px", fontSize: 11 }}
-            title="If the iframe is blank, try the alternate URL form"
+            title="Toggle between the embed URL (iframeable) and the full-app URL (works in a new tab)"
             onClick={() => setUseAlt(!useAlt)}
           >
-            {useAlt ? "Use /rooms URL" : "Use /spaces URL"}
+            {useAlt ? "Use /embed URL" : "Use full-app URL"}
           </button>
           <button
             className="btn"
