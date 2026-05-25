@@ -1,197 +1,242 @@
-# End-to-end test scenario
+# End-to-end test scenario — LiveZerobus
 
-Numbered checkpoints. When you hit a broken step, paste me the step number + what you actually saw.
+Comprehensive walk-through of every feature. Each step has **EXPECT** and **FAIL** so you can run through systematically and report "step N.M fails: <what I saw>".
 
-Each step has an **EXPECT** (what should happen) and **FAIL** (what to capture if it doesn't).
+URLs:
 
----
+- **livezerobus app**: <https://livezerobus-5347428297913551.11.azure.databricksapps.com>
+- **SAP BDC mock (external VPS)**: <https://photop.uzar.pl>
+- **Databricks workspace**: <https://adb-5347428297913551.11.azuredatabricks.net>
+- **Lakeflow pipeline**: <https://adb-5347428297913551.11.azuredatabricks.net/pipelines/4cef05ca-ea6f-4217-af60-6b75a6b1a3f4>
+- **Genie spaces**: <https://adb-5347428297913551.11.azuredatabricks.net/genie>
+- **GitHub Actions**: <https://github.com/lakime/LiveZerobus/actions>
 
-## 0. Prerequisites
-
-Open these in tabs so we can debug fast:
-
-- Databricks workspace: <https://adb-5347428297913551.11.azuredatabricks.net>
-- livezerobus app: <https://livezerobus-5347428297913551.11.azure.databricksapps.com>
-- Lakeflow pipeline: <https://adb-5347428297913551.11.azuredatabricks.net/pipelines/4cef05ca-ea6f-4217-af60-6b75a6b1a3f4>
-- SAP BDC mock GUI (external, on VPS): <https://photop.uzar.pl>
-- GitHub Actions runs: <https://github.com/lakime/LiveZerobus/actions>
-
-Confirm:
-
-- [ ] Latest CI run for `deploy` workflow on `main` is **✅ success**
-- [ ] livezerobus app shows **app=RUNNING, compute=ACTIVE** (Workspace → Compute → Apps → livezerobus)
-
-**FAIL**: paste the CI failure log or the app status line.
+Before starting, open **DevTools** (F12) → **Network** tab in the livezerobus tab, filter by `/api/`. We use it throughout.
 
 ---
 
-## 1. Backend health
+## §1. Deployment + boot
 
-```bash
-TOKEN=$(databricks auth token --profile softdev 2>/dev/null \
-  | python3 -c "import json,sys;print(json.load(sys.stdin).get('access_token',''))")
-curl -H "Authorization: Bearer $TOKEN" \
-  https://livezerobus-5347428297913551.11.azure.databricksapps.com/healthz
-```
-
-**EXPECT**: `{"ok":true}`
-**FAIL**: `App Not Active` → app crashed; check logs in Databricks UI → Apps → livezerobus → Logs tab.
-
----
-
-## 2. Start simulators
-
-```bash
-cd /Users/puzar/livebus/LiveZerobus/simulators
-python sim_ui.py
-```
-
-Browser opens <http://localhost:7777>. Click **▶ Start all**.
-
-**EXPECT**: 6 simulator rows each show **RUNNING** with growing line counts in the log view.
-
-**FAIL**: any sim stays at `STOPPED` or its log shows `ConnectionError` → paste the bad sim's log.
-
----
-
-## 3. Bronze gets fresh events
-
-Wait 30s after starting sims, then run from your laptop:
-
-```bash
-python3 - <<'EOF'
-import json, re, urllib.request
-TOKEN = "PASTE_YOUR_PAT_HERE"
-HOST = "https://adb-5347428297913551.11.azuredatabricks.net"
-WH = "6a1fb3b32b00f1cd"
-
-def sql(q):
-    req = urllib.request.Request(f"{HOST}/api/2.0/sql/statements",
-        data=json.dumps({"warehouse_id":WH,"statement":q,"wait_timeout":"30s"}).encode(),
-        method="POST", headers={"Authorization":f"Bearer {TOKEN}","Content-Type":"application/json"})
-    r = json.loads(re.sub(r"[\x00-\x1f\x7f]"," ",urllib.request.urlopen(req,timeout=60).read().decode()))
-    return r.get("result",{}).get("data_array",[])
-
-for t in ["bz_commodity_prices","bz_demand_events","bz_inventory_events","bz_supplier_quotes","bz_sap_purchase_orders","bz_iot_sensor_events"]:
-    rows = sql(f"SELECT MAX(event_ts) AS latest, COUNT(*) AS n FROM livezerobus.procurement.{t}")
-    print(f"  {t:30s} latest={rows[0][0]}  n={rows[0][1]}")
-EOF
-```
-
-**EXPECT**: every `latest` is within the last 1–2 min.
-
-**FAIL**: any table's `latest` is hours/days old → that sim isn't emitting. Reply with the table name + the timestamp shown.
-
----
-
-## 4. Pipeline runs Bronze → Gold
-
-```bash
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "$HOST/api/2.0/pipelines/4cef05ca-ea6f-4217-af60-6b75a6b1a3f4" \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); u=(d.get('latest_updates') or [{}])[0]; print(f\"  state={d.get('state')}  latest_update={u.get('state')} {u.get('creation_time')}\")"
-```
-
-**EXPECT**: `state=RUNNING` AND `latest_update=COMPLETED` (or in `RUNNING/INITIALIZING` if just kicked).
-
-**FAIL**: `latest_update=FAILED` → grab the update ID and look at the pipeline UI for the failed step.
-
-Also check Gold freshness:
-
-```python
-for t in ["gd_commodity_latest","gd_demand_1h","gd_inventory_snapshot","gd_supplier_leaderboard"]:
-    rows = sql(f"SELECT MAX(event_ts) FROM livezerobus.procurement.{t}" if t!='gd_demand_1h' else f"SELECT MAX(hour_ts) FROM livezerobus.procurement.{t}")
-    print(f"  {t}  latest={rows[0][0]}")
-```
-
-**EXPECT**: each `latest` within last ~10 min.
-
-**FAIL**: > 15 min → pipeline isn't propagating to Gold. Paste output + pipeline UI screenshot.
-
----
-
-## 5. Backend `/api/*` returns Gold rows
-
-In the livezerobus tab in your browser (already authenticated via Databricks OAuth), open DevTools → Network tab. Hard refresh (Cmd+Shift+R).
-
-Find each request below and check **Status: 200** + **Response: non-empty JSON array**:
-
-- [ ] `GET /api/commodity/latest` — expect 5 rows (coco_coir, kwh, nutrient_pack, peat, rockwool)
-- [ ] `GET /api/inventory` — expect ≥ 80 rows
-- [ ] `GET /api/suppliers/leaderboard?top=3` — expect ≥ 10 rows
-- [ ] `GET /api/demand/hourly?hours=24` — expect ≥ 5 rows
-- [ ] `GET /api/recommendations?limit=25` — expect any rows (may be empty if pipeline ML step skipped)
-- [ ] `GET /api/iot/sensors` — expect 42 rows (6 rooms × 7 sensors)
-- [ ] `GET /api/summary` — expect object with `skus_below_reorder`, `buy_now_last_5m`, etc.
-
-**FAIL**: any endpoint returns `[]` or 5xx → paste step number + endpoint + the actual response JSON.
-
----
-
-## 6. Dashboard panels render
-
-In livezerobus tab → **Dashboard**. Watch each panel for 30s with sims running:
-
-| # | Panel | EXPECT | FAIL diagnostic |
+| # | Action | EXPECT | FAIL → tell me |
 |---|---|---|---|
-| 6a | **Inventory** | Table with SKUs, room IDs, on-hand grams. Numbers change as inventory events arrive. | Empty table → check step 5 `/api/inventory`. Numbers don't change → pipeline not running. |
-| 6b | **Suppliers** | Top 3 suppliers per SKU listed with prices. | Empty → step 5 `/api/suppliers/leaderboard`. |
-| 6c | **Grow-Input prices (KPI cards)** | 5 cards: coco_coir, peat, rockwool, nutrient_pack, kwh — each shows `$X.XX` + `±X.XX%`. | All cards say "—" → step 5 `/api/commodity/latest`. |
-| 6d | **Grow-Input prices (chart)** | Line chart with up to 60 samples. After 1 min should have ~20 points. Lines move ±a few % as prices update. | Single flat line at 0% → backend returning same price every poll; pipeline isn't refreshing Gold. Empty chart → no samples accumulated (give it 30s). |
-| 6e | **Planting / Demand** | Bar/area chart over the last 24h. | Empty → step 5 `/api/demand/hourly`. |
-| 6f | **Recommendations table** | Rows of SKU/decision/score. May be empty if ML didn't score yet. | If pipeline run completed but still empty → ML step may have skipped. Not a blocker for the demo. |
-| 6g | **Summary bar (top)** | `Updated <timestamp>` and counters showing real numbers. | All counters say 0 → check step 5 `/api/summary`. |
+| 1.1 | Latest CI run on `main` at <https://github.com/lakime/LiveZerobus/actions/workflows/deploy.yml> | ✅ green; finished within the last 24h | Red run → paste the failing step from the log |
+| 1.2 | Visit `<app>/healthz` | `{"ok":true}` | "App Not Available" or 5xx → app crashed; UI → Compute → Apps → livezerobus → Logs |
+| 1.3 | Visit `<app>/api/admin/recovery/status` | JSON with `enabled:true`, recent `last_cycle_started`, `last_error:null` | `last_error` populated → paste it |
+| 1.4 | Visit `<app>/api/admin/recovery/freshness` | `{"gold":{"latest":"<recent ts>"}}` — within ~10 min | error or old timestamp → see §3 |
 
 ---
 
-## 7. SAP P2P tab
+## §2. Simulators
 
-EXPECT 2 tables: Open PO Lines, Invoice Matching. PO supplier column shows real vendor names (joined from BDC LFA1 — falls back to LIFNR if BDC offline).
-
-**FAIL**: empty tables → `gd_sap_open_po_lines` / `gd_sap_invoice_matching` in Gold; check the SAP simulator output in step 3.
-
----
-
-## 8. SAP BDC tab
-
-EXPECT green **CONNECTED · 15 tables in sapsofts.procurement** banner + Overview / Vendors / Purchase Orders sub-tabs all populated.
-
-**FAIL** modes:
-- **DISCONNECTED** → SAP_BDC_WAREHOUSE_ID env var missing on backend (check `backend/app.yaml`).
-- **Connected but Vendors empty** → grant SP read access in UC: `GRANT USE CATALOG, BROWSE ON CATALOG sapsofts TO 'c4352007-…'; GRANT USE SCHEMA, SELECT ON SCHEMA sapsofts.procurement TO 'c4352007-…';`
-- **Random red error banner** → click **Sync now** in Overview sub-tab.
+| # | Action | EXPECT | FAIL → tell me |
+|---|---|---|---|
+| 2.1 | Start sim UI: `cd simulators && python sim_ui.py`. Browser opens <http://localhost:7777> | All 6 sims listed | UI doesn't load → paste console error |
+| 2.2 | Click **▶ Start all** | All 6 rows turn **RUNNING** within ~5s | Any stuck at STOPPED → paste that sim's log |
+| 2.3 | Watch the log pane for `commodity_simulator` for 10s | 1 new line every 1-2s, no `ConnectionError` | Silent or red → that sim isn't emitting; paste log |
+| 2.4 | The "Events" counter shows `0` | **This is a known UI bug — ignore it.** The real data check is §3 | n/a |
 
 ---
 
-## 9. Genie tab
+## §3. Data pipeline (Bronze → Gold)
 
-EXPECT iframe of Databricks Genie space.
+Open the **Pipeline tab** in the livezerobus app.
 
-**FAIL** modes:
-- **NOT CONFIGURED** → click ⚙ Configure → paste your space ID → Save.
-- `refused to connect` → space ID wrong, or `/genie/rooms/{id}` instead of `/embed/genie/rooms/{id}`. Toggle the "Use full-app URL" button to compare.
+| # | Action | EXPECT | FAIL → tell me |
+|---|---|---|---|
+| 3.1 | Pipeline panel shows state | `RUNNING` (it may go through INITIALIZING → SETTING_UP_TABLES → RUNNING on cold start, up to 10 min) | `FAILED` → click into Databricks Pipeline UI, screenshot the failed stage |
+| 3.2 | Last update timestamp shown | within the last 15 min | older → §3.3 |
+| 3.3 | Click **▶ Run now** in Pipeline panel | Status changes to "WAITING_FOR_RESOURCES" → eventually "RUNNING" | Permission denied → SP doesn't have CAN_RUN; reply with that |
+| 3.4 | Wait 5-10 min after pipeline COMPLETED | `<app>/api/admin/recovery/freshness` → `gold.latest` is within last few min | older → pipeline ran but didn't update Gold; tell me |
 
 ---
 
-## 10. Auto-recovery is healthy
+## §4. Backend API endpoints
 
-```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  https://livezerobus-5347428297913551.11.azure.databricksapps.com/api/admin/recovery/status \
-  | python3 -m json.tool
-```
+In livezerobus tab, with DevTools Network open. Hard refresh (Cmd+Shift+R) so all `/api/*` calls fire.
 
-**EXPECT**:
-- `last_cycle_started` and `last_cycle_finished` are within the last 5 minutes
-- `last_error` is `null`
-- `actions` shows recent log entries
+For each endpoint, click it in Network → **Response** tab. EXPECT a non-empty JSON array (or object for `/summary`).
 
-**FAIL**: `last_error` populated → paste it.
+| # | Endpoint | EXPECT (sample) | FAIL → tell me |
+|---|---|---|---|
+| 4.1 | `/api/commodity/latest` | 5 rows: `coco_coir`, `kwh`, `nutrient_pack`, `peat`, `rockwool` | `[]` → tell me; check `/api/admin/recovery/freshness` |
+| 4.2 | `/api/commodity/history?minutes=30` | 30-150 rows of historical price ticks | `[]` → Bronze table has no events; sim isn't writing |
+| 4.3 | `/api/inventory` | ≥80 rows with `sku`, `room_id`, `on_hand_g` | `[]` → Gold MV stale |
+| 4.4 | `/api/suppliers/leaderboard?top=3` | ≥10 rows with `supplier_name`, `score`, `rank` ≤3 | `[]` → tell me |
+| 4.5 | `/api/demand/hourly?hours=24` | ≥5 rows with `sku`, `hour_ts`, `trays` | `[]` → tell me |
+| 4.6 | `/api/recommendations?limit=25` | rows with `sku`, `decision`, `ml_score`. Empty OK if pipeline ML step didn't run | n/a if empty |
+| 4.7 | `/api/iot/sensors` | 42 rows (6 rooms × 7 sensors) | `[]` → IoT sim isn't emitting |
+| 4.8 | `/api/sap/po-lines` | rows with `po_number`, `po_status`, etc. Empty OK if SAP sim hasn't completed a cycle yet | n/a if empty |
+| 4.9 | `/api/sap/invoice-matching` | rows; empty OK early | n/a if empty |
+| 4.10 | `/api/summary` | non-zero `skus_below_reorder`, `buy_now_last_5m`, `last_market_tick` populated | all zero / null → tell me which fields |
+| 4.11 | `/api/sap-bdc/info` | `{"connected":true,"table_count":15,...}` | `connected:false` → see §6 |
+| 4.12 | `/api/genie/info` | `{"configured":true,"url":"https://.../embed/genie/rooms/<id>"}` OR `{"configured":false,...}` if no env var | n/a — see §7 |
+
+---
+
+## §5. Dashboard tab
+
+Click **Dashboard** in the top tab bar. Watch each panel for ~30 seconds.
+
+| # | Panel | EXPECT | FAIL → tell me |
+|---|---|---|---|
+| 5.1 | **Summary bar** at top | Non-zero counters; "Updated <time>" ticks every 3s | All zeros → §4.10 failed |
+| 5.2 | **Inventory** | Table with SKU rows, on-hand grams numeric. Numbers change every 30s | Empty → §4.3 |
+| 5.3 | **Supplier Leaderboard** | Top 3 suppliers per SKU with scores | "No seed quotes yet" → §4.4 |
+| 5.4 | **Grow-Input Prices KPI cards** (5) | Each shows `$X.XX` price + `±X.XX%` 24h change | "—" → §4.1 |
+| 5.5 | **Grow-Input Prices chart** | On first load → 30 min of history visible (preloaded). Lines drift up/down ±a few % | Blank → §4.2 |
+| 5.6 | **Planting / Demand chart** | Bar/area chart over last 24h with multiple SKUs | "Waiting for planting data…" → §4.5 |
+| 5.7 | **Recommendations** | Table with SKU/decision/score | Empty OK if ML step skipped |
+| 5.8 | Hit `↻ Refresh` button at top | All panels re-fetch (Network tab shows new requests) | No re-fetch → reload bug; tell me |
+
+---
+
+## §6. SAP BDC tab
+
+Click **SAP BDC** in the tab bar.
+
+| # | Action | EXPECT | FAIL → tell me |
+|---|---|---|---|
+| 6.1 | Top of panel | Green **CONNECTED** badge + "15 tables in sapsofts.procurement" | Red **DISCONNECTED** → §6.6 |
+| 6.2 | Click **Overview** sub-tab | 15 SAP table codes as badges (EKKO, LFA1, MARA, ...) | Empty list → catalog not synced; click **Sync now** |
+| 6.3 | Click **Sync now** button | Progress bar advances 0→100% as it warms each table | Hangs at one table → reply with which |
+| 6.4 | Click **Vendors (LFA1)** sub-tab | Searchable table with 20 vendor rows: LIFNR, NAME1, LAND1, ORT01... | Empty / red error → §6.6 |
+| 6.5 | Search "Germany" or "DE" in the Vendors search box | Filters down to matching rows | No filtering → tell me |
+| 6.6 | If §6.1 says DISCONNECTED | Backend can't reach `sapsofts.procurement.*` via SQL warehouse | Either `SAP_BDC_WAREHOUSE_ID` env missing (check `backend/app.yaml`), or SP lacks UC grants on `sapsofts` |
+| 6.7 | Click **Purchase Orders (EKKO+EKPO)** sub-tab | Joined PO header + line items + vendor name | Empty / red error → click Sync now in Overview |
+| 6.8 | Open the BDC mock UI directly: <https://photop.uzar.pl> | SAP-styled interface loads (blue title bar, t-codes, status bar at bottom) | Won't load → SSH to VPS, `docker compose ps` |
+| 6.9 | On photop.uzar.pl → **Tables** tab | Grid of 15 SAP table cards with row counts | Empty grid → sim/data missing; `docker compose logs sap-bdc` |
+| 6.10 | On photop.uzar.pl → **Share** tab | 15 tables listed with toggle checkboxes — all ON | Some OFF → toggle ON or click "Enable all" |
+| 6.11 | On photop.uzar.pl → **Connect** tab → **Download profile.json** | File downloads with `bearerToken` field set | Empty token / 401 → check `SAP_BDC_TOKEN` env on VPS |
+
+---
+
+## §7. Genie tab
+
+| # | Action | EXPECT | FAIL → tell me |
+|---|---|---|---|
+| 7.1 | Click **Genie · Talk to data** in the tab bar | Either: iframe loads with a Genie chat UI **OR**: setup form ("NOT CONFIGURED" + config form) | Blank white area → see §7.5 |
+| 7.2 | If you see the iframe | Type "show me top 5 vendors by PO value" in the chat → wait 10-20s for response | "Refused to connect" → §7.5 |
+| 7.3 | If config form | Paste your Genie space URL (`https://adb-…/genie/rooms/01f…`) | n/a |
+| 7.4 | Click **Save** → iframe loads | Genie chat appears with shared catalogs accessible | iframe still blank → click **⚙ Configure** → toggle "Use full-app URL" |
+| 7.5 | "Refused to connect" | The URL should be `/embed/genie/rooms/<id>`, not `/genie/rooms/<id>`. Re-save with the correct URL. The /embed/ surface allows iframes, the standard URL doesn't | If still broken → reply with the full URL the iframe is hitting (browser DevTools → Network → click the iframe request → Request URL) |
+
+---
+
+## §8. SAP P2P tab
+
+Click **SAP P2P** in the tab bar.
+
+| # | Action | EXPECT | FAIL → tell me |
+|---|---|---|---|
+| 8.1 | Two tables visible: **Open PO Lines** + **3-way Invoice Match** | Each with rows from the SAP simulator | Empty → SAP sim hasn't run a complete P2P cycle yet (PO→GR→Invoice takes ~45s per cycle) |
+| 8.2 | Open PO Lines: supplier name column | Shows real vendor name (joined from BDC LFA1) OR raw LIFNR as fallback | Empty supplier → backend `/api/sap-bdc/vendor-lookup` not responding |
+| 8.3 | Filter by status: select `OPEN` | Rows filter | Filter does nothing → §4.8 |
+| 8.4 | 3-way Invoice Match: VARIANCE rows | Highlighted in red with non-zero variance | Empty → SAP sim hasn't reached invoice stage |
+
+---
+
+## §9. Agent tabs (Emails / POs & Budget / Onboarding / Invoices / Agent runs)
+
+These all read/write Lakebase Postgres native agent state.
+
+| # | Tab | EXPECT | FAIL → tell me |
+|---|---|---|---|
+| 9.1 | **Emails** | List of threads, each clickable to see messages | Empty → no agent runs yet OR Lakebase agent-state tables missing |
+| 9.2 | **POs & Budget** | PO drafts + budget panel with remaining $ | "po_drafts does not exist" → run `python scripts/apply_lakebase_schema.py` |
+| 9.3 | **Supplier Onboarding** | Form to apply + list of applications | Empty form OK; submit one → row should appear |
+| 9.4 | **Invoices** | Reconciliation rows | Empty OK if no SAP cycles completed |
+| 9.5 | **Agent runs** | History of agent tick runs | Empty → no agents have run yet; trigger via the buttons in agent-specific tabs |
+
+---
+
+## §10. IoT tab
+
+Click **IoT Fields** in the tab bar.
+
+| # | Action | EXPECT | FAIL → tell me |
+|---|---|---|---|
+| 10.1 | Farm overview header | Aggregate values (e.g. avg temp, alert count) | Empty → §4.7 |
+| 10.2 | 6 room cards | Each room shows 7 sensor gauges (temp, humidity, soil moisture, light, CO₂, pH, EC) | Some sensors blank → IoT sim fault injection; should self-recover in ~5 min |
+| 10.3 | Sparklines on each gauge | Last 10-20 readings as a small line trend | Flat / missing → sim writing too slowly OR Gold MV stale |
+| 10.4 | Status badges | NOMINAL (green) / CAUTION (yellow) / ALERT (red) based on thresholds | All NOMINAL is normal if sim has been running long enough for faults to inject + recover |
+
+---
+
+## §11. Pipeline tab
+
+Click **Pipeline** in the tab bar.
+
+| # | Action | EXPECT | FAIL → tell me |
+|---|---|---|---|
+| 11.1 | Pipeline state badge | `RUNNING` or `IDLE` | `FAILED` → §3.1 |
+| 11.2 | Last update info | Timestamp + state + duration | Stale → §3 |
+| 11.3 | Click **▶ Run now** | New update kicks off (status changes) | Permission denied → SP CAN_RUN missing |
+| 11.4 | Watch the status update | Cycles through INITIALIZING → SETTING_UP_TABLES → RUNNING → COMPLETED | Stuck on any stage > 15 min → reply with which |
+
+---
+
+## §12. Auto-recovery
+
+The backend self-heal thread should be doing its job invisibly.
+
+| # | Action | EXPECT | FAIL → tell me |
+|---|---|---|---|
+| 12.1 | `<app>/api/admin/recovery/status` | `last_cycle_started` within last 5 min | older → recovery thread not running |
+| 12.2 | `actions[]` array | Contains messages like "Gold MV is fresh" or "kicked Lakeflow pipeline update" every 5 min | Sparse / empty → restart app |
+| 12.3 | `last_error` | `null` (the harmless ResourceConflict was suppressed) | non-null → paste it |
+| 12.4 | Force a cycle: POST `<app>/api/admin/recovery/run` | `{"started":true}` | 5xx → reply |
+
+---
+
+## §13. SAP BDC service health (the external VPS)
+
+Open <https://photop.uzar.pl> directly (NOT via livezerobus).
+
+| # | Action | EXPECT | FAIL → tell me |
+|---|---|---|---|
+| 13.1 | Page loads SAP-styled GUI | Blue title bar, "BDC/100" system info, 4 tabs at top, status bar at bottom | Won't load → SSH to VPS, `docker compose ps` |
+| 13.2 | `<photop>/healthz` | `{"ok":true}` | Anything else → §6.8 |
+| 13.3 | `<photop>/api/info` | `{"tables_ready":15,"tables_total":15,"tables_shared":15}` | `tables_shared` < 15 → toggle "Enable all" in Share tab |
+| 13.4 | `<photop>/api/profile.json` | Profile JSON with token + endpoint | Empty → broken SAP_BDC_TOKEN env |
+| 13.5 | Click **Share** tab → all 15 checkboxes ON | All ON, "15 / 15 tables shared" badge | Some OFF → toggle ON |
+| 13.6 | From Databricks SQL editor: `SELECT count(*) FROM sapsofts.procurement.ekko` | Returns 150 | `RESOURCE_DOES_NOT_EXIST` → run `python scripts/refresh_sapsofts_catalog.py` |
+
+---
+
+## §14. Genie space configuration (one-time)
+
+Only needed once.
+
+| # | Action | EXPECT | FAIL → tell me |
+|---|---|---|---|
+| 14.1 | Open <https://adb-…databricks.net/genie/spaces> | Existing Genie spaces listed | Empty → create one: click **+ New** |
+| 14.2 | Create space "LiveZerobus — Talk to data", warehouse `6a1fb3b32b00f1cd` | Wizard succeeds | Permission denied → CAN_USE on warehouse missing |
+| 14.3 | Add tables: `livezerobus.procurement.gd_*` + `sapsofts.procurement.*` | Tables listed in space config | Catalog not visible → §6.6 |
+| 14.4 | Copy the space_id from the URL | URL has format `/genie/rooms/01f…` — copy that hex string | n/a |
+| 14.5 | In livezerobus Genie tab → ⚙ Configure → paste URL → Save | Iframe loads the space | "Refused to connect" → §7.5 |
 
 ---
 
 ## Reporting back
 
-Tell me **"step N fails: <what you saw>"** — I'll fix that specific layer instead of chasing the symptom.
+For any failure: **"§X.Y fails: <what I saw>"** — that pinpoints the exact layer.
 
-If everything passes, the demo path is solid. The dashboard charts moving visibly depends on pipeline cadence (~every 5–10 min), so leave sims + sim_ui running for a few minutes to see commodity prices drift on the chart.
+If everything passes:
+
+1. Leave sims + sim_ui running for ~15 min so the pipeline runs a couple times
+2. Dashboard charts will show movement (commodity price drift, demand bars filling in)
+3. Try a Genie question like "which supplier is cheapest for SEED-LETT-RED-01"
+4. Demo path is solid.
+
+## Quick recovery commands (if needed)
+
+```bash
+# All-purpose: refresh the sapsofts catalog with retries
+DATABRICKS_TOKEN=<pat> python scripts/refresh_sapsofts_catalog.py
+
+# Apply Lakebase agent-state schema (one-time after a fresh Lakebase deploy)
+python scripts/apply_lakebase_schema.py
+
+# Force livezerobus to redeploy
+gh workflow run deploy.yml --ref main
+```
