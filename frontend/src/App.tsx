@@ -14,13 +14,14 @@ import InvoicesPanel from "./components/InvoicesPanel";
 import AgentRunsPanel from "./components/AgentRunsPanel";
 import SapPanel from "./components/SapPanel";
 import SapBdcPanel from "./components/SapBdcPanel";
+import GeniePanel from "./components/GeniePanel";
 import IotFieldsPanel from "./components/IotFieldsPanel";
 import PipelinePanel from "./components/PipelinePanel";
 import HealthPanel from "./components/HealthPanel";
 
 const REFRESH_MS = 3000;
 
-type Tab = "dashboard" | "emails" | "po" | "onboarding" | "invoices" | "runs" | "sap" | "sap-bdc" | "iot" | "pipeline" | "health";
+type Tab = "dashboard" | "emails" | "po" | "onboarding" | "invoices" | "runs" | "sap" | "sap-bdc" | "iot" | "pipeline" | "health" | "genie";
 
 function RefreshBar({ onRefresh }: { onRefresh: () => void }) {
   const [lastTs, setLastTs] = useState(() => new Date());
@@ -95,6 +96,7 @@ export default function App() {
         <Tab id="runs"       on={tab} onSet={setTab}>Agent runs</Tab>
         <Tab id="sap"        on={tab} onSet={setTab}>SAP P2P</Tab>
         <Tab id="sap-bdc"    on={tab} onSet={setTab}>SAP BDC</Tab>
+        <Tab id="genie"      on={tab} onSet={setTab}>Genie · Talk to data</Tab>
         <Tab id="iot"        on={tab} onSet={setTab}>IoT Fields</Tab>
         <Tab id="pipeline"   on={tab} onSet={setTab}>Pipeline</Tab>
         <Tab id="health"     on={tab} onSet={setTab}>Health</Tab>
@@ -201,6 +203,15 @@ export default function App() {
             <RefreshBar onRefresh={manualRefresh} />
           </div>
           <SapBdcPanel />
+        </section>
+      )}
+
+      {tab === "genie" && (
+        <section className="card tall">
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <h2 style={{ margin:0 }}>Talk to your data · Databricks Genie</h2>
+          </div>
+          <GeniePanel />
         </section>
       )}
 

@@ -65,3 +65,9 @@ env:
     value: sapsofts
   - name: SAP_BDC_SCHEMA
     value: procurement
+  # Databricks Genie iframe embed. Leave GENIE_SPACE_ID empty until the
+  # space is created in the UI; then paste the space_id here.
+  - name: DATABRICKS_HOST
+    value: "https://adb-5347428297913551.11.azuredatabricks.net"
+  - name: GENIE_SPACE_ID
+    value: ""

@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import Settings
 from .routes.agents import router as agents_router
 from .routes.data import router as data_router
+from .routes.genie import router as genie_router
 from .routes.health import router as health_router
 from .routes.sap_bdc import router as sap_bdc_router
 
@@ -34,6 +35,7 @@ app.add_middleware(
 app.include_router(data_router)
 app.include_router(agents_router)
 app.include_router(sap_bdc_router)
+app.include_router(genie_router)
 app.include_router(health_router)
 
 

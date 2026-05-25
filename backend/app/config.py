@@ -18,6 +18,9 @@ class Settings:
     sap_bdc_warehouse_id: str
     sap_bdc_catalog: str
     sap_bdc_schema: str
+    # Genie embed: workspace host (for iframe URL) and space id.
+    databricks_host: str
+    genie_space_id: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -37,4 +40,8 @@ class Settings:
             sap_bdc_warehouse_id=os.environ.get("SAP_BDC_WAREHOUSE_ID", ""),
             sap_bdc_catalog=os.environ.get("SAP_BDC_CATALOG", "sapsofts"),
             sap_bdc_schema=os.environ.get("SAP_BDC_SCHEMA", "procurement"),
+            # Genie iframe embed. If GENIE_SPACE_ID is empty, the Genie tab
+            # shows setup instructions instead of an iframe.
+            databricks_host=os.environ.get("DATABRICKS_HOST", "").rstrip("/"),
+            genie_space_id=os.environ.get("GENIE_SPACE_ID", ""),
         )
