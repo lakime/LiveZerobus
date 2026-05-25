@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +16,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
+from .routes.admin import router as admin_router
 from .routes.agents import router as agents_router
 from .routes.data import router as data_router
 from .routes.genie import router as genie_router
@@ -23,7 +25,23 @@ from .routes.sap_bdc import router as sap_bdc_router
 
 
 settings = Settings.from_env()
-app = FastAPI(title="LiveZerobus — Seed Procurement", version="0.2.0")
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    # Self-heal stuck data path (Lakeflow pipeline + Lakebase synced tables)
+    # in the background. Idempotent — safe to import even when the SDK
+    # isn't fully configured.
+    try:
+        from .auto_recovery import start_background_loop
+        start_background_loop()
+    except Exception:
+        # Recovery is best-effort; never block app boot on it.
+        pass
+    yield
+
+
+app = FastAPI(title="LiveZerobus — Seed Procurement", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,6 +55,7 @@ app.include_router(agents_router)
 app.include_router(sap_bdc_router)
 app.include_router(genie_router)
 app.include_router(health_router)
+app.include_router(admin_router)
 
 
 @app.get("/healthz")
