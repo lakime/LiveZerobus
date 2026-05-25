@@ -62,16 +62,14 @@ TABLES: dict[str, tuple[str, list[str]]] = {
     "sap_invoice_matching":        ("gd_sap_invoice_matching",        ["invoice_doc_number"]),
 }
 
-# The timestamp column on each Gold MV / synced table we compare to detect drift.
+# The timestamp column on each Gold MV / synced table we compare to detect
+# drift. Tables without a usable timestamp column are skipped — they still
+# get reset if they fail outright, just not on a freshness comparison.
 TIMESTAMP_COL: dict[str, str] = {
-    "commodity_prices_latest":     "event_ts",
-    "demand_1h":                   "hour_ts",
-    "inventory_snapshot":          "last_event_ts",
-    "supplier_leaderboard":        "quote_ts",
-    "procurement_recommendations": "scored_at",
-    "iot_sensor_latest":           "event_ts",
-    "sap_po_lines":                "po_creation_ts",
-    "sap_invoice_matching":        "invoice_creation_ts",
+    "commodity_prices_latest": "event_ts",
+    "demand_1h":               "hour_ts",
+    "inventory_snapshot":      "last_event_ts",
+    "supplier_leaderboard":    "quote_ts",
 }
 
 
@@ -181,7 +179,7 @@ def _drop_pg_table(name: str) -> None:
     import psycopg
     w = _client()
     pg_user = os.environ.get("PGUSER", APP_SP)
-    cred = w.postgres.generate_database_credential(name=ENDPOINT).token
+    cred = w.postgres.generate_database_credential(endpoint=ENDPOINT).token
     with psycopg.connect(
         host=PGHOST, port=5432, dbname=PGDATABASE,
         user=pg_user, password=cred, sslmode="require",
@@ -240,25 +238,25 @@ def _run_sql(sql: str) -> list[dict]:
 
 def check_freshness() -> dict[str, Any]:
     """Compare Gold MV latest_ts vs Lakebase synced table latest_ts.
-    Returns dict with per-table drift info."""
-    pieces = []
+    Per-table so a single permission / missing-table error doesn't break
+    the whole check (some tables may not be synced yet, e.g. iot_sensor_latest)."""
+    out: dict[str, Any] = {}
     for name, (mv, _pks) in TABLES.items():
         ts = TIMESTAMP_COL.get(name)
         if not ts:
             continue
-        pieces.append(
-            f"SELECT '{name}' AS t, '{ts}' AS col, "
-            f"(SELECT MAX({ts}) FROM {CATALOG}.{SCHEMA}.{mv}) AS gold_ts, "
-            f"(SELECT MAX({ts}) FROM {CATALOG}.{SCHEMA}.{name}) AS sync_ts"
-        )
-    sql = " UNION ALL ".join(pieces)
-    rows = _run_sql(sql)
-    out: dict[str, Any] = {}
-    for r in rows:
-        out[r["t"]] = {
-            "gold_ts": r.get("gold_ts"),
-            "sync_ts": r.get("sync_ts"),
-        }
+        info: dict[str, Any] = {}
+        try:
+            rows = _run_sql(f"SELECT MAX({ts}) AS gold_ts FROM {CATALOG}.{SCHEMA}.{mv}")
+            info["gold_ts"] = rows[0].get("gold_ts") if rows else None
+        except Exception as e:
+            info["gold_error"] = str(e)[:120]
+        try:
+            rows = _run_sql(f"SELECT MAX({ts}) AS sync_ts FROM {CATALOG}.{SCHEMA}.{name}")
+            info["sync_ts"] = rows[0].get("sync_ts") if rows else None
+        except Exception as e:
+            info["sync_error"] = str(e)[:120]
+        out[name] = info
     return out
 
 
