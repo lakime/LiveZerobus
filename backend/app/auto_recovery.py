@@ -188,6 +188,32 @@ def _drop_pg_table(name: str) -> None:
         conn.commit()
 
 
+def _grant_pg_table(name: str, retries: int = 12, sleep_s: float = 5.0) -> bool:
+    """Grant SELECT (and ALL) on the freshly-created Postgres table to the
+    app service principal. The synced-table initial snapshot lands
+    asynchronously after create_synced_table() returns, so retry until
+    the table appears in information_schema."""
+    import psycopg
+    w = _client()
+    pg_user = os.environ.get("PGUSER", APP_SP)
+    for attempt in range(1, retries + 1):
+        cred = w.postgres.generate_database_credential(endpoint=ENDPOINT).token
+        with psycopg.connect(
+            host=PGHOST, port=5432, dbname=PGDATABASE,
+            user=pg_user, password=cred, sslmode="require",
+        ) as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = %s AND table_name = %s)", (SCHEMA, name),
+            )
+            if cur.fetchone()[0]:
+                cur.execute(f'GRANT ALL ON {SCHEMA}.{name} TO "{APP_SP}"')
+                conn.commit()
+                return True
+        time.sleep(sleep_s)
+    return False
+
+
 def reset_synced_table(name: str) -> bool:
     """Full DELETE + DROP + CREATE recovery for one synced table.
     Returns True if recreate was issued."""
@@ -210,7 +236,13 @@ def reset_synced_table(name: str) -> bool:
             synced_table=pg.SyncedTable(spec=spec),
             synced_table_id=f"{CATALOG}.{SCHEMA}.{name}",
         )
-        _record(f"reset stuck synced table: {name}")
+        # Without GRANT the dashboard returns empty results — the app SP
+        # owns the read path but has no privileges on a freshly-created table.
+        granted = _grant_pg_table(name)
+        if granted:
+            _record(f"reset + grant: {name}")
+        else:
+            _record(f"reset OK but GRANT timed out: {name}")
         return True
     except Exception as e:
         _record_error(e)
