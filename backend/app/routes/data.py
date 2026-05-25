@@ -102,8 +102,11 @@ def supplier_leaderboard(
     top: int = Query(5, ge=1, le=20),
     settings: Settings = Depends(get_settings),
 ):
-    params = [{"name": "top", "value": str(top)}]
-    where = "WHERE rank <= :top"
+    # `top` is integer-bounded by Query() — safe to inline. SDK named
+    # parameters were being typed as STRING, so `WHERE rank <= '3'`
+    # returned empty even though rank IS an int.
+    params = []
+    where = f"WHERE rank <= {int(top)}"
     if sku:
         where += " AND sku = :sku"
         params.append({"name": "sku", "value": sku})
