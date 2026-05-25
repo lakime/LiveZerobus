@@ -129,7 +129,7 @@ Simulator streams and their Bronze tables:
   - Each sensor slow-mean-reverts to its nominal value between cycles
   - Random fault injection drifts a sensor out of bounds; faults self-recover after ~5 min
   - Emits to `bz_iot_sensor_events` with room ID, sensor type, value, unit
-- **sim_ui.py** — FastAPI-based GUI control panel (Tkinter-free, runs in the browser at `:8765`):
+- **sim_ui.py** — FastAPI-based GUI control panel (Tkinter-free, runs in the browser at `:7777`, override via `SIM_UI_PORT`):
   - Start / Stop all simulators or individual ones
   - Live log viewer with per-simulator colour coding
   - Config tab to read/write `.env` settings (DATABRICKS_HOST, LAKEBASE_INSTANCE, etc.)
@@ -381,7 +381,7 @@ Fixed in commit `28ae511` — Gold MV now filters `packs > 0` and the agent's WH
 
 ```bash
 # 1. Start simulators (keeps pipeline cluster warm + Bronze fresh)
-cd simulators && .venv/bin/python sim_ui.py    # browser :8765, click "Start all"
+cd simulators && .venv/bin/python sim_ui.py    # browser :7777, click "Start all"
 
 # 2. Health check + auto-repair anything stale
 cd ..
@@ -400,7 +400,7 @@ Keep these open in another tab:
 | Window | URL / command |
 |--------|---------------|
 | Pipeline state | livezerobus app → Pipeline tab |
-| Sim emit rate | `:8765` (sim_ui) — ignore the "0 events" counter, it's a known UI bug |
+| Sim emit rate | `:7777` (sim_ui) — ignore the "0 events" counter, it's a known UI bug |
 | Quick freshness check | `python scripts/pre_demo_warmup.py --quick` (no SAP BDC, runs in <10s) |
 
 ### Recovery playbooks
