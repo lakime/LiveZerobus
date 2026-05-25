@@ -1,180 +1,248 @@
-# UI test — LiveZerobus app
+# UI walk-through — step by step
 
-Pure browser walk-through. No terminal, no DevTools, no SSH. Just click through every screen and check what you see.
+Open <https://livezerobus-5347428297913551.11.azure.databricksapps.com>.
 
-For any failure, reply **"step N fails: <what I saw>"** — I'll fix it.
+Do each step in order. After every step there's a 👁 line showing what should be on screen.
 
-**App URL**: <https://livezerobus-5347428297913551.11.azure.databricksapps.com>
-
-Before starting, make sure simulators are running (`python sim_ui.py` → <http://localhost:7777> → ▶ Start all). Then wait ~10 min for the pipeline to produce fresh data.
+If a step doesn't match, reply **"step N: <what I see instead>"**.
 
 ---
 
-## 1. App loads
+## A. Open the app
 
-| # | Action | EXPECT |
-|---|---|---|
-| 1.1 | Open the app URL | Header `LiveZerobus — Vertical-Farm Seed Procurement`. Tab bar with 11 tabs |
-| 1.2 | Tab bar visible | Dashboard, Emails, POs & Budget, Supplier Onboarding, Invoices, Agent runs, SAP P2P, SAP BDC, Genie · Talk to data, IoT Fields, Pipeline |
-| 1.3 | Summary bar at top | Shows numbers (e.g. "3 SKUs below reorder", "$XX,XXX pending spend") + `Updated <time>` ticking every 3s |
+1. Go to the URL above.
+   👁 You see a header `LiveZerobus — Vertical-Farm Seed Procurement` and a row of tabs.
 
----
+2. Look at the very top, just under the header.
+   👁 A bar with numbers, e.g. `3 SKUs below reorder · $12,000 pending spend · Updated 14:23:11`.
 
-## 2. Dashboard — every panel
-
-Click **Dashboard**.
-
-| # | Panel | EXPECT |
-|---|---|---|
-| 2.1 | **Inventory snapshot** | Table with SKU rows × room columns. On-hand grams shown. Numbers update every ~10 min as new events flow through |
-| 2.2 | **Supplier leaderboard (ML-ranked)** | Table with top 3 suppliers per SKU. Columns: supplier name, score, price |
-| 2.3 | **Grow-input prices — 5 KPI cards** | 5 cards: `coco_coir`, `peat`, `rockwool`, `nutrient_pack`, `kwh` — each shows `$X.XX` price + `±X.XX%` 24h change |
-| 2.4 | **Grow-input prices — chart** | Line chart with last 30 min of price history visible immediately on page load. 5 colored lines (one per commodity). Y-axis is % change since first sample |
-| 2.5 | **Planting / Demand chart** | Bar or area chart spanning last 24h with multiple SKU series |
-| 2.6 | **Recommendations table** | Rows with SKU + BUY_NOW / HOLD decision + ML score (empty acceptable if pipeline ML step hasn't scored yet) |
-| 2.7 | Click `↻ Refresh` (top-right) | All panels re-fetch; the "Updated" timestamp jumps |
+3. Wait 4 seconds.
+   👁 The `Updated` time on the right ticks forward.
 
 ---
 
-## 3. Emails
+## B. Refresh the data (Pipeline)
 
-Click **Emails**.
+4. Click the **Pipeline** tab (last tab on the right).
+   👁 A card shows the pipeline name and a state, e.g. `RUNNING` or `IDLE`.
 
-| # | Action | EXPECT |
-|---|---|---|
-| 3.1 | List view | Email threads listed with vendor name + subject + last-message time. Empty if no agent has run yet |
-| 3.2 | Click a thread | Right pane shows the full message history (vendor request, agent reply, etc.) |
-| 3.3 | Top of panel | Counter showing inbox / processed / pending counts |
+5. Look for a `▶ Run now` button on that card.
+   👁 The button is visible.
 
----
+6. Click `▶ Run now`.
+   👁 State changes to `WAITING_FOR_RESOURCES` (or `RUNNING` if a cluster is already warm).
 
-## 4. POs & Budget
-
-Click **POs & Budget**.
-
-| # | Action | EXPECT |
-|---|---|---|
-| 4.1 | PO Drafts table | Rows of generated POs with supplier, SKU, qty, $ amount, status (DRAFT / APPROVED / etc.) |
-| 4.2 | Budget panel (right side) | Monthly budget remaining bar + spend by category |
-| 4.3 | Click a draft PO | Detail view showing reasoning text from the agent |
+7. (Optional, takes 5–10 min) Wait until state changes to `COMPLETED`.
+   👁 The "Last update" timestamp on the card jumps to "just now".
 
 ---
 
-## 5. Supplier Onboarding
+## C. Dashboard — read each panel
 
-Click **Supplier Onboarding**.
+8. Click the **Dashboard** tab.
+   👁 Several panels appear on one page.
 
-| # | Action | EXPECT |
-|---|---|---|
-| 5.1 | Onboarding form | Fields: supplier name (dropdown with autocomplete), contact email, SKU specialties, certifications, etc. |
-| 5.2 | Existing applications table | Below the form — list of submitted applications with status (NEW / SCREENING / APPROVED / REJECTED) |
-| 5.3 | Submit a new test application | After submit, new row appears in the table within ~5s |
+9. Find the **Inventory snapshot** panel.
+   👁 A table with rows like `SEED-BAS-GEN-01 · ROOM-A · 7600 g`.
 
----
+10. Find the **Supplier leaderboard** panel.
+    👁 A table with 3 supplier rows per SKU. Columns include supplier name, price, score.
 
-## 6. Invoices
+11. Find the **Grow-input prices** section, look at the top of it.
+    👁 5 small cards in a row: `coco_coir`, `peat`, `rockwool`, `nutrient_pack`, `kwh`. Each shows a $-price and a green/red % below it.
 
-Click **Invoices**.
+12. Look at the **chart below those 5 cards**.
+    👁 A line chart with 5 colored lines. The lines span the width of the chart.
+    👁 Y-axis shows percentage values like `+1.2%`, `-0.8%`.
+    👁 X-axis shows times like `14:00`, `14:05`, `14:10`.
 
-| # | Action | EXPECT |
-|---|---|---|
-| 6.1 | Invoice reconciliation list | Rows with PO number, invoiced $, expected $, variance % |
-| 6.2 | Status badges | MATCHED (green) / VARIANCE (yellow) / BLOCKED (red) |
-| 6.3 | High-variance row | Highlighted with reason text (e.g. "Quantity mismatch") |
+13. Find the **Planting / Demand chart** panel.
+    👁 A bar or area chart with multiple SKU series along the bottom (last 24 hours).
 
----
+14. Find the **Recommendations** table.
+    👁 Rows with SKU + a decision word like `BUY_NOW` or `HOLD` + a score. (Empty is OK if pipeline is still warming up.)
 
-## 7. Agent runs
-
-Click **Agent runs**.
-
-| # | Action | EXPECT |
-|---|---|---|
-| 7.1 | Run history list | One row per agent tick: timestamp, agent name, status (OK / ERROR), duration |
-| 7.2 | Click a row | Detail panel with the agent's input → reasoning → output |
-| 7.3 | Five agent buttons | Each tab/section also has a "▶ Run <agent>" button — click one, a new row should appear within ~5s |
+15. Click the `↻ Refresh` button at the top-right.
+    👁 Panels re-fetch. The `Updated` timestamp at the very top jumps.
 
 ---
 
-## 8. SAP P2P
+## D. Emails — see what agents talked about
 
-Click **SAP P2P**.
+16. Click the **Emails** tab.
+    👁 A list of email threads on the left, each with vendor name + subject.
 
-| # | Action | EXPECT |
-|---|---|---|
-| 8.1 | **Open PO Lines** table | Rows with PO number, supplier name (real name, not just code), SKU, qty, value, delivery date, status |
-| 8.2 | Filter dropdown | Select `OPEN` → table filters; select `FULLY_RECEIVED` → different rows |
-| 8.3 | **3-way Invoice Match** table | Rows showing PO × GR × Invoice match status |
-| 8.4 | VARIANCE rows | Red highlight, variance $ amount shown |
+17. Click the first thread.
+    👁 On the right, the full message exchange appears (vendor request, agent reply, etc.).
 
----
-
-## 9. SAP BDC
-
-Click **SAP BDC**.
-
-| # | Action | EXPECT |
-|---|---|---|
-| 9.1 | Top banner | Green **CONNECTED** + "15 tables in sapsofts.procurement" |
-| 9.2 | **Overview** sub-tab | 15 SAP table badges (EKKO, EKPO, LFA1, MARA, T001, …). Click `↻ Sync now` → progress bar advances |
-| 9.3 | **Vendors (LFA1)** sub-tab | 20 vendor rows with LIFNR, NAME1, LAND1, ORT01, STRAS, TELF1 |
-| 9.4 | Search the vendors | Type a name fragment → filters the table |
-| 9.5 | **Purchase Orders (EKKO+EKPO)** sub-tab | Joined PO header + line items + vendor name. Multiple rows per PO (one per line item) |
-| 9.6 | Click a column header | Sortable / visual feedback |
+18. Scroll the message list.
+    👁 You can see multiple messages stacked vertically.
 
 ---
 
-## 10. Genie · Talk to data
+## E. POs & Budget — trigger an agent
 
-Click **Genie · Talk to data**.
+19. Click the **POs & Budget** tab.
+    👁 Left side: a table of PO drafts. Right side: a budget panel with $ remaining.
 
-| # | Action | EXPECT |
-|---|---|---|
-| 10.1 | If never configured | Setup form. Paste your Genie space URL (from Databricks → Genie → your space → copy URL) → Save |
-| 10.2 | After config | Iframe loads with the Databricks Genie chat UI |
-| 10.3 | In the Genie chat box | Type "show me top 5 vendors by total PO value" → wait 10-30s → answer with chart |
-| 10.4 | Click **⚙ Configure** (top-right) | Config form reopens; you can switch to a different space ID or clear local override |
+20. Look at the table — any row at all is fine.
+    👁 At least one PO row visible with supplier, SKU, $ amount, status badge (`DRAFT` / `APPROVED` / `BLOCKED`).
 
----
+21. Look for a `▶ Run negotiator` (or `▶ Run PO drafter`) button.
+    👁 The button is visible somewhere on the panel.
 
-## 11. IoT Fields
+22. Click it.
+    👁 A status message appears (e.g. "Negotiator running…" or "PO drafted: PO-12345").
+    👁 Within ~10 seconds, a new row appears in the PO table.
 
-Click **IoT Fields**.
-
-| # | Action | EXPECT |
-|---|---|---|
-| 11.1 | Farm overview header | Aggregate values: 6 rooms, avg temp, alert count |
-| 11.2 | 6 room cards | One card per grow room (ROOM-A through ROOM-COLD) |
-| 11.3 | Per room | 7 sensor gauges: Temperature, Humidity, Soil moisture, Light, CO₂, pH, EC |
-| 11.4 | Each gauge | Arc + numeric value + colored status (green NOMINAL / yellow CAUTION / red ALERT) |
-| 11.5 | Sparkline under each gauge | Last ~10 readings as a tiny line trend |
-| 11.6 | Wait 30s | At least one sensor's gauge needle moves slightly (sims drift values) |
+23. Click the new PO row.
+    👁 Detail expands showing the agent's reasoning text.
 
 ---
 
-## 12. Pipeline
+## F. Supplier onboarding — submit a fake supplier
 
-Click **Pipeline**.
+24. Click the **Supplier Onboarding** tab.
+    👁 A form with fields like supplier name, contact email, certifications.
 
-| # | Action | EXPECT |
-|---|---|---|
-| 12.1 | Pipeline state card | Shows `RUNNING` or `IDLE` |
-| 12.2 | Last update info | Timestamp + state + duration of last pipeline run |
-| 12.3 | Click `▶ Run now` | New update kicks off; status changes to WAITING_FOR_RESOURCES → INITIALIZING → RUNNING → COMPLETED (5-10 min total) |
-| 12.4 | After completion | Dashboard panels show fresher data |
+25. In the supplier name dropdown, start typing "Test"
+    👁 Autocomplete options appear OR field accepts new text.
+
+26. Fill in contact email, e.g. `test@example.com`.
+    👁 Field accepts the value.
+
+27. Click **Submit**.
+    👁 The form clears OR a confirmation appears.
+    👁 In the applications table below, a new row appears with status `NEW`.
+
+28. (Optional) Look for a `▶ Run onboarding agent` button → click it.
+    👁 Within ~10 s, the new row's status changes to `SCREENING` then `APPROVED`/`REJECTED`.
+
+---
+
+## G. Invoices
+
+29. Click the **Invoices** tab.
+    👁 A table of invoice rows with PO #, $ invoiced, $ expected, variance %.
+
+30. Look for a row with a red background or `VARIANCE` badge.
+    👁 At least one row stands out as variance (if SAP sim has run long enough).
+
+31. (Optional) Click `▶ Run reconciler` button.
+    👁 Within ~10 s, a row's status changes.
+
+---
+
+## H. Agent runs
+
+32. Click the **Agent runs** tab.
+    👁 Table of past runs: timestamp, agent name, status, duration.
+
+33. Click any row.
+    👁 Detail panel shows input → reasoning → output of that run.
+
+---
+
+## I. SAP P2P
+
+34. Click the **SAP P2P** tab.
+    👁 Two tables: Open PO Lines (top) + 3-way Invoice Match (bottom).
+
+35. In Open PO Lines, find the status filter dropdown.
+    👁 Dropdown with options like ALL, OPEN, PARTIALLY_RECEIVED, FULLY_RECEIVED, CANCELLED.
+
+36. Select `OPEN`.
+    👁 Table filters to only OPEN POs.
+
+37. Look at the Supplier column.
+    👁 Real names appear (e.g. "Acme Seeds Ltd"), not just numeric codes.
+    (If you only see codes like `0000100013`, that's the BDC join failed — note it.)
+
+38. Scroll to the 3-way Invoice Match table.
+    👁 Rows with PO/GR/Invoice numbers + match status badges (MATCHED / VARIANCE / PENDING_GR / NO_PO).
+
+---
+
+## J. SAP BDC — external Delta Sharing data
+
+39. Click the **SAP BDC** tab.
+    👁 At the very top: a green `CONNECTED` badge + "15 tables in sapsofts.procurement".
+
+40. Click the **Overview** sub-tab inside this panel.
+    👁 A grid of 15 small badges: EKKO, EKPO, LFA1, MARA, T001, T001W, T023, T024, EKBE, EKET, EBAN, MKPF, MSEG, RBKP, BKPF.
+
+41. Look for a `↻ Sync now` button.
+    👁 The button is visible above the badges.
+
+42. Click `↻ Sync now`.
+    👁 A progress bar appears and advances 0% → 100% (takes ~30-60 s).
+    👁 At 100%, all 15 badges are green.
+
+43. Click the **Vendors (LFA1)** sub-tab.
+    👁 A search box at the top + a table with 20 rows: LIFNR, name, country, city, address, phone.
+
+44. In the search box, type `de` (German vendors).
+    👁 Table filters to rows where country/city contains "de".
+
+45. Clear the search.
+    👁 All 20 rows return.
+
+46. Click the **Purchase Orders (EKKO+EKPO)** sub-tab.
+    👁 A table of joined PO header + line items + vendor name. Many rows.
+
+---
+
+## K. Genie — talk to your data
+
+47. Click the **Genie · Talk to data** tab.
+    👁 Either:
+       (a) An iframe loads with a Databricks Genie chat interface, OR
+       (b) A setup form saying "NOT CONFIGURED".
+
+48. If (b) setup form:
+    - In Databricks workspace, go to Genie in sidebar → open your space → copy the URL from the browser address bar (looks like `https://adb-…/genie/rooms/01f…`).
+    - Paste into the input field in the form.
+    - Click **Save**.
+    👁 The iframe loads with Genie chat.
+
+49. In the Genie chat box, type: `which 5 suppliers have the highest total PO value?`
+    👁 Genie thinks for 5-20 seconds, then returns a chart + table answer.
+
+50. Type: `show grow-input prices over the last hour`
+    👁 Genie returns a line chart.
+
+---
+
+## L. IoT Fields
+
+51. Click the **IoT Fields** tab.
+    👁 A header strip with farm-wide aggregates (avg temp, alerts).
+
+52. Below it, 6 room cards.
+    👁 Each card titled `ROOM-A`, `ROOM-B`, `ROOM-C`, `ROOM-D`, `ROOM-E`, `ROOM-COLD`.
+
+53. Pick any one card and look at it closely.
+    👁 7 small arc-shaped gauges inside: Temp, Humidity, Soil moisture, Light, CO₂, pH, EC.
+
+54. Each gauge shows a current value + a colored status.
+    👁 Most should be green (NOMINAL). Possibly some yellow (CAUTION) or red (ALERT) if sim has injected a fault.
+
+55. Look under each gauge.
+    👁 A tiny sparkline showing the last 10-ish readings.
+
+56. Wait 30 seconds without doing anything.
+    👁 Some gauge needles or sparklines change (sims drift values).
 
 ---
 
 ## Done
 
-If every step above worked, the demo path is solid. Leave the simulators running for the duration of the demo so data keeps flowing.
+If every step matched, the app is fully working. Demo away.
 
-If any step fails, reply with:
+For any mismatch, reply:
 
 ```
-step N.M fails: <what I saw>
+step N: <what I see>
 ```
 
-and I'll fix that specific layer.
-
-For deeper diagnosis (curl, DevTools), see [`docs/E2E_TEST.md`](E2E_TEST.md).
+I'll fix that specific thing.
