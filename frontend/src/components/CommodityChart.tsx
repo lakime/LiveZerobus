@@ -21,12 +21,31 @@ export default function CommodityChart({ tick }: { tick: number }) {
   const [series, setSeries] = useState<Sample[]>([]);
   const [latest, setLatest] = useState<CommodityRow[]>([]);
 
+  // One-shot preload: pull the last 30 minutes of per-minute price ticks
+  // from Bronze so the chart shows a curve immediately on page refresh,
+  // instead of accumulating samples from zero. Runs once on mount.
+  useEffect(() => {
+    api.commodityHistory(30).then((rows) => {
+      // Group by minute → one sample per (HH:MM) timestamp
+      const byMinute = new Map<string, Sample>();
+      for (const r of rows) {
+        const ts = new Date(r.event_ts);
+        const key = ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        let s = byMinute.get(key);
+        if (!s) { s = { t: key }; byMinute.set(key, s); }
+        s[r.input_key] = Number(r.price_usd);
+      }
+      setSeries(Array.from(byMinute.values()));
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     api.commodity().then((rows) => {
       setLatest(rows);
       const t = new Date().toLocaleTimeString();
       setSeries((prev) => {
-        const next = prev.slice(-59);
+        const next = prev.slice(-119);  // keep up to ~2hrs of samples
         const sample: Sample = { t };
         for (const r of rows) sample[r.input_key] = r.price_usd;
         next.push(sample);

@@ -235,6 +235,10 @@ export const api = {
   inventory: () => getJSON<InventoryRow[]>("/api/inventory"),
   leaderboard: (top = 3) => getJSON<SupplierRow[]>(`/api/suppliers/leaderboard?top=${top}`),
   commodity: () => getJSON<CommodityRow[]>("/api/commodity/latest"),
+  commodityHistory: (minutes = 30) =>
+    getJSON<{ input_key: string; event_ts: string; price_usd: number }[]>(
+      `/api/commodity/history?minutes=${minutes}`,
+    ),
   demand: (hours = 24) => getJSON<DemandHourRow[]>(`/api/demand/hourly?hours=${hours}`),
   recommendations: (limit = 25) =>
     getJSON<RecommendationRow[]>(`/api/recommendations?limit=${limit}`),

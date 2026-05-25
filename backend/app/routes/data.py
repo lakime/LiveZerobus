@@ -128,6 +128,26 @@ def commodity_latest(settings: Settings = Depends(get_settings)):
     """)
 
 
+@router.get("/commodity/history")
+def commodity_history(
+    minutes: int = Query(30, ge=1, le=240),
+    settings: Settings = Depends(get_settings),
+):
+    """Per-minute commodity price ticks straight from Bronze for the last
+    N minutes. Used by the chart to show a curve immediately on page
+    refresh instead of accumulating samples in browser memory."""
+    return wq(settings, f"""
+        SELECT
+            input_key,
+            date_trunc('MINUTE', event_ts) AS event_ts,
+            AVG(price_usd) AS price_usd
+          FROM {CATALOG}.{SCHEMA}.bz_commodity_prices
+         WHERE event_ts >= current_timestamp() - INTERVAL {int(minutes)} MINUTE
+         GROUP BY input_key, date_trunc('MINUTE', event_ts)
+         ORDER BY event_ts ASC
+    """)
+
+
 # -------------------- Planting / demand --------------------
 
 @router.get("/demand/hourly", response_model=list[DemandHourRow])
@@ -136,8 +156,8 @@ def demand_hourly(
     hours: int = Query(24, ge=1, le=168),
     settings: Settings = Depends(get_settings),
 ):
-    params = [{"name": "hours", "value": str(hours)}]
-    where = "WHERE hour_ts >= current_timestamp() - make_interval(0, 0, 0, 0, CAST(:hours AS INT), 0, 0)"
+    params = []
+    where = f"WHERE hour_ts >= current_timestamp() - INTERVAL {int(hours)} HOUR"
     if sku:
         where += " AND sku = :sku"
         params.append({"name": "sku", "value": sku})

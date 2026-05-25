@@ -107,6 +107,11 @@ def trigger_pipeline_if_needed() -> bool:
         _record("kicked Lakeflow pipeline update")
         return True
     except Exception as e:
+        # ResourceConflict on start_update means a pipeline update was started
+        # between our check and our trigger — race condition, harmless.
+        if "ResourceConflict" in type(e).__name__ or "already exists" in str(e):
+            _record(f"pipeline race: another update started concurrently")
+            return False
         _record_error(e)
         return False
 
