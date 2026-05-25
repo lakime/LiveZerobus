@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..config import Settings
-from . import db
+from . import db, gold
 from .llm import FoundationModelClient, LLMError
 
 
@@ -86,45 +86,32 @@ def _record_run(
 # ---------------------------------------------------------------------------
 
 def _open_rec_needing_rfq(settings: Settings) -> dict | None:
-    return db.fetchone(
-        settings,
-        """SELECT r.recommendation_id, r.sku, r.reorder_grams, r.packs,
-                  r.pack_size_g, r.unit_price_usd, r.total_cost_usd,
-                  r.expected_lead_days, r.recommended_supplier_id,
-                  r.recommended_supplier_name
-             FROM procurement.procurement_recommendations r
-            WHERE r.decision = 'BUY_NOW'
-              -- Defensive: never RFQ for zero quantity. The Gold MV
-              -- occasionally emits BUY_NOW with reorder_grams=0 when the
-              -- target stock math produces a non-positive delta. Skipping
-              -- those here keeps suppliers from receiving "please send me
-              -- 0g" emails.
-              AND r.reorder_grams > 0
-              AND r.packs > 0
-              AND r.recommended_supplier_id IS NOT NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM procurement.email_outbox o
-                 WHERE o.sku = r.sku
-                   AND o.supplier_id = r.recommended_supplier_id
-                   AND o.intent = 'RFQ'
-                   AND o.created_ts > NOW() - INTERVAL '1 day'
-              )
-            ORDER BY r.created_ts DESC
-            LIMIT 1""",
-    )
+    # Pull the freshest BUY_NOW candidates from Gold (warehouse), then filter
+    # them in Postgres against the email_outbox — Postgres has the writable
+    # outbox, but the recommendations live in Delta, so we can't JOIN them
+    # in one query without depending on a Lakebase synced table.
+    candidates = gold.open_buy_now_recommendations(settings, limit=20)
+    if not candidates:
+        return None
+    for rec in candidates:
+        existing = db.fetchone(
+            settings,
+            """SELECT 1 FROM procurement.email_outbox
+                WHERE sku = %s AND supplier_id = %s AND intent = 'RFQ'
+                  AND created_ts > NOW() - INTERVAL '1 day'
+                LIMIT 1""",
+            [rec["sku"], rec["recommended_supplier_id"]],
+        )
+        if not existing:
+            return rec
+    return None
 
 
 def _supplier_email(settings: Settings, supplier_id: str) -> str:
-    # dim_supplier lives in Unity Catalog (not synced to Lakebase by default).
-    # We keep a small lookup synced into procurement.supplier_leaderboard rows via
-    # supplier_name; for the demo the LLM writes to a fake mailbox, so we
-    # derive an email from the supplier_id if nothing is synced.
-    row = db.fetchone(
-        settings,
-        "SELECT supplier_name FROM procurement.supplier_leaderboard WHERE supplier_id = %s LIMIT 1",
-        [supplier_id],
-    )
-    name = (row or {}).get("supplier_name") or supplier_id
+    # Look up the display name in Gold so we can build a plausible demo
+    # email address. The LLM writes to a fake mailbox so this only has to
+    # be human-readable.
+    name = gold.supplier_name(settings, supplier_id) or supplier_id
     slug = name.lower().split()[0].replace("'", "")
     return f"orders@{slug}.demo"
 
@@ -267,13 +254,7 @@ def simulate_supplier_reply(
     if not thread:
         return {"error": f"thread {thread_id} not found"}
     llm = FoundationModelClient()
-    supplier_row = db.fetchone(
-        settings,
-        "SELECT supplier_name FROM procurement.supplier_leaderboard "
-        "WHERE supplier_id=%s LIMIT 1",
-        [thread["supplier_id"]],
-    )
-    supplier_name = (supplier_row or {}).get("supplier_name") or thread["supplier_id"]
+    supplier_name = gold.supplier_name(settings, thread["supplier_id"]) or thread["supplier_id"]
     user = (
         f"You are {supplier_name}. The buyer asked about SKU {thread['sku']}.\n\n"
         f"Original email subject: {thread['subject']}\n"

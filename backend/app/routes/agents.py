@@ -261,22 +261,39 @@ def simulate_invoice(
 
 @router.post("/cycle")
 def full_cycle(settings: Settings = Depends(get_settings)) -> dict:
-    """Run the full agent chain in order. Handy for the demo.
+    """Run the full agent chain end-to-end. One click → at least one PO draft.
 
-    Order matters:
-      1. negotiator    — drafts RFQs / processes inbound replies
-      2. po_drafter    — turns QUOTE threads into DRAFT POs
-      3. budget_gate   — approves / rejects DRAFT POs against the budget
-      4. simulate one synthetic invoice for an APPROVED PO without one
-      5. reconciler    — flips NEW reconciliation rows to OK / REVIEW / DISPUTE
-      6. onboarding    — scores any NEW supplier applications
+    The chain walks both halves of negotiation in a single call:
+      1. negotiator        — drafts an RFQ for one BUY_NOW rec
+      2. simulate_reply    — generates a supplier reply for each drafted thread
+                              (so po_drafter has something to chew on this cycle)
+      3. negotiator        — extracts price/pack/lead from the new inbound reply
+      4. po_drafter        — promotes QUOTE threads into DRAFT POs
+      5. budget_gate       — approves / rejects DRAFT POs against the budget
+      6. invoice_simulator — generates one synthetic invoice for an APPROVED PO
+      7. reconciler        — flips NEW reconciliation rows to OK / REVIEW / DISPUTE
+      8. onboarding        — scores any NEW supplier applications
     """
     out: dict[str, Any] = {}
-    out["negotiator"] = run_negotiator_once(settings)
+    out["negotiator_draft"] = run_negotiator_once(settings)
+
+    # Simulate a supplier reply for every newly drafted thread so the inbox
+    # is populated by the time po_drafter looks at it. Without this step the
+    # cycle is dead-end: an RFQ is sent, but no inbound reply ever lands.
+    replies: list[dict] = []
+    for thread_id in out["negotiator_draft"].get("drafted_threads", []) or []:
+        try:
+            replies.append(simulate_supplier_reply(settings, thread_id))
+        except Exception as e:  # noqa: BLE001
+            replies.append({"thread_id": thread_id, "error": str(e)})
+    out["simulated_replies"] = replies
+
+    # Run the negotiator a second time so it processes the inbound replies we
+    # just simulated (sets intent_detected + extracted_json on each email).
+    out["negotiator_process"] = run_negotiator_once(settings)
+
     out["po_drafter"] = run_po_drafter(settings)
     out["budget_gate"] = run_budget_gate(settings)
-    # Generate at most one synthetic invoice per cycle so the demo grows
-    # invoice volume gradually rather than exploding all at once.
     out["invoice_simulator"] = simulate_invoice_for_po(settings)
     out["reconciler"] = run_reconciler(settings)
     out["onboarding"] = run_onboarding(settings)

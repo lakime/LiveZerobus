@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from ..config import Settings
-from . import db
+from . import db, gold
 
 
 def _now() -> datetime:
@@ -64,11 +64,10 @@ def run_po_drafter(settings: Settings) -> dict:
 
         # Look up the reorder grams from the original recommendation if any,
         # otherwise fall back to 10 packs so the demo flow always advances.
-        rec = db.fetchone(
-            settings,
-            """SELECT reorder_grams, packs FROM procurement.procurement_recommendations
-                WHERE sku=%s ORDER BY created_ts DESC LIMIT 1""",
-            [row["sku"] or row["out_sku"]],
+        # Reads Gold MV directly via the SQL warehouse — the Lakebase synced
+        # copy of this table goes stale and breaks the cycle.
+        rec = gold.latest_recommendation_for_sku(
+            settings, row["sku"] or row["out_sku"]
         ) or {}
         packs = max(int((rec.get("reorder_grams") or 0) / pack) or
                     (rec.get("packs") or 10), 1)

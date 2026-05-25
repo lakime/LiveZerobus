@@ -5,8 +5,9 @@ SQL warehouse, the only remaining failure mode is the Lakeflow pipeline
 auto-terminating after idle — Gold MVs then stop refreshing. This module
 detects that and kicks a new pipeline update.
 
-Lakebase synced tables are no longer in the read path (data.py now goes
-warehouse → Gold MV directly) so we don't try to manage them here.
+Lakebase synced tables are no longer in the read path (data.py + the
+agents both go warehouse → Gold MV directly), so this module doesn't
+manage them.
 """
 from __future__ import annotations
 
