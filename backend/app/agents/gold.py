@@ -34,9 +34,16 @@ def _coerce(v: Any) -> Any:
     return v
 
 
-def _rows(settings: Settings, sql: str, params: list[dict[str, str]] | None = None) -> list[dict[str, Any]]:
-    rows = wh_execute(settings, sql, parameters=params)
+def _rows(settings: Settings, sql: str) -> list[dict[str, Any]]:
+    rows = wh_execute(settings, sql)
     return [{k: _coerce(v) for k, v in r.items()} for r in rows]
+
+
+def _sql_quote(s: str) -> str:
+    """Quote a string for safe inlining into SQL. Values here come from
+    Gold rows (supplier_id, sku) and dim_sku rows — never user input —
+    but escape defensively anyway."""
+    return "'" + s.replace("'", "''") + "'"
 
 
 def latest_recommendation_for_sku(settings: Settings, sku: str) -> dict | None:
@@ -45,10 +52,9 @@ def latest_recommendation_for_sku(settings: Settings, sku: str) -> dict | None:
         settings,
         f"""SELECT reorder_grams, packs
               FROM {CATALOG}.{SCHEMA}.gd_procurement_recommendations
-             WHERE sku = :sku
+             WHERE sku = {_sql_quote(sku)}
              ORDER BY created_ts DESC
              LIMIT 1""",
-        [{"name": "sku", "value": sku}],
     )
     return rows[0] if rows else None
 
@@ -79,8 +85,7 @@ def supplier_name(settings: Settings, supplier_id: str) -> str | None:
         settings,
         f"""SELECT supplier_name
               FROM {CATALOG}.{SCHEMA}.gd_supplier_leaderboard
-             WHERE supplier_id = :supplier_id
+             WHERE supplier_id = {_sql_quote(supplier_id)}
              LIMIT 1""",
-        [{"name": "supplier_id", "value": supplier_id}],
     )
     return (rows[0].get("supplier_name") if rows else None)
