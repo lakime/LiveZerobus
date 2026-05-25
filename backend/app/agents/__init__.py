@@ -9,7 +9,6 @@ from .llm import FoundationModelClient, LLMError
 from .negotiator import run_negotiator_once
 from .po_drafter import run_po_drafter
 from .budget_gate import run_budget_gate
-from .supplier_onboarding import run_onboarding
 from .invoice_reconciler import run_reconciler
 
 __all__ = [
@@ -18,6 +17,5 @@ __all__ = [
     "run_negotiator_once",
     "run_po_drafter",
     "run_budget_gate",
-    "run_onboarding",
     "run_reconciler",
 ]

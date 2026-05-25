@@ -126,20 +126,6 @@ export type BudgetState = {
   }[];
 };
 
-export type SupplierApplication = {
-  application_id: string;
-  submitted_ts: string;
-  supplier_name: string | null;
-  contact_email: string | null;
-  country: string | null;
-  offered_skus: string | null;
-  organic_cert: boolean | null;
-  years_in_biz: number | null;
-  status: string | null;
-  score: number | null;
-  agent_notes: string | null;
-};
-
 export type InvoiceReconciliation = {
   reconciliation_id: string;
   received_ts: string;
@@ -250,18 +236,18 @@ export const api = {
   poDrafts: (status?: string) =>
     getJSON<PoDraft[]>(`/api/agents/po_drafts${status ? `?status=${status}` : ""}`),
   budget: () => getJSON<BudgetState>("/api/agents/budget"),
-  applications: (status?: string) =>
-    getJSON<SupplierApplication[]>(
-      `/api/agents/applications${status ? `?status=${status}` : ""}`,
-    ),
-  submitApplication: (body: {
-    supplier_name: string;
-    contact_email: string;
-    country: string;
-    offered_skus?: string;
-    organic_cert?: boolean;
-    years_in_biz?: number;
-  }) => postJSON<{ application_id: string; status: string }>("/api/agents/applications", body),
+  addBudgetEntry: (body: {
+    delta_usd: number;
+    note?: string;
+    category?: string;
+  }) =>
+    postJSON<{
+      ledger_id: string;
+      period_ym: string;
+      category: string;
+      delta_usd: number;
+      balance_usd: number;
+    }>("/api/agents/budget/entry", body),
   invoices: (status?: string) =>
     getJSON<InvoiceReconciliation[]>(
       `/api/agents/invoices${status ? `?status=${status}` : ""}`,

@@ -16,7 +16,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ..agents import (
     run_budget_gate,
     run_negotiator_once,
-    run_onboarding,
     run_po_drafter,
     run_reconciler,
 )
@@ -139,49 +138,53 @@ def budget(settings: Settings = Depends(get_settings)) -> dict:
     }
 
 
-# --------------------------- Applications + invoices -----------------------
-
-
-@router.get("/applications")
-def applications(
-    status: str | None = None,
-    settings: Settings = Depends(get_settings),
-) -> list[dict]:
-    if status:
-        return fetchall(settings,
-            "SELECT * FROM procurement.supplier_applications WHERE status=%s "
-            "ORDER BY submitted_ts DESC",
-            [status.upper()])
-    return fetchall(settings,
-        "SELECT * FROM procurement.supplier_applications "
-        "ORDER BY submitted_ts DESC LIMIT 50")
-
-
-@router.post("/applications")
-def submit_application(
+@router.post("/budget/entry")
+def add_budget_entry(
     payload: dict,
     settings: Settings = Depends(get_settings),
 ) -> dict:
-    """Submit a supplier application (demo UI form POST)."""
-    required = {"supplier_name", "contact_email", "country"}
-    missing = required - set(payload.keys())
-    if missing:
-        raise HTTPException(400, f"missing fields: {missing}")
-    app_id = _new_id("APP")
+    """Add a manual budget-ledger entry (top-up or write-off).
+
+    Body: {"delta_usd": number, "note"?: string, "category"?: string}
+    Positive delta = top-up; negative = write-off.
+    """
+    try:
+        delta = float(payload.get("delta_usd"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "delta_usd must be a number")
+    if delta == 0:
+        raise HTTPException(400, "delta_usd must be non-zero")
+    category = (payload.get("category") or "SEED").upper()
+    note = (payload.get("note") or "Manual ledger entry").strip()[:500]
+
+    n = _now()
+    period = f"{n.year:04d}-{n.month:02d}"
+    prev = fetchone(settings,
+        "SELECT balance_usd FROM procurement.budget_ledger "
+        "WHERE period_ym=%s AND category=%s "
+        "ORDER BY entry_ts DESC LIMIT 1",
+        [period, category])
+    prev_balance = float(prev["balance_usd"]) if prev else 0.0
+    new_balance = prev_balance + delta
+
+    ledger_id = _new_id("LED")
     execute(settings, """
-        INSERT INTO procurement.supplier_applications
-          (application_id, submitted_ts, supplier_name, contact_email,
-           country, offered_skus, organic_cert, years_in_biz, status,
-           score, agent_notes)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'NEW', NULL, NULL)
-    """, [
-        app_id, _now(),
-        payload["supplier_name"], payload["contact_email"], payload["country"],
-        payload.get("offered_skus", ""),
-        bool(payload.get("organic_cert", False)),
-        int(payload.get("years_in_biz", 0) or 0),
-    ])
-    return {"application_id": app_id, "status": "NEW"}
+        INSERT INTO procurement.budget_ledger
+          (ledger_id, entry_ts, period_ym, category,
+           delta_usd, balance_usd, po_id, note)
+        VALUES (%s, %s, %s, %s, %s, %s, NULL, %s)
+    """, [ledger_id, n, period, category, delta, new_balance, note])
+
+    return {
+        "ledger_id": ledger_id,
+        "period_ym": period,
+        "category": category,
+        "delta_usd": delta,
+        "balance_usd": new_balance,
+    }
+
+
+# --------------------------- Invoices -----------------------
 
 
 @router.get("/invoices")
@@ -235,11 +238,6 @@ def budget_gate_tick(settings: Settings = Depends(get_settings)) -> dict:
     return run_budget_gate(settings)
 
 
-@router.post("/onboarding/tick")
-def onboarding_tick(settings: Settings = Depends(get_settings)) -> dict:
-    return run_onboarding(settings)
-
-
 @router.post("/reconciler/tick")
 def reconciler_tick(settings: Settings = Depends(get_settings)) -> dict:
     return run_reconciler(settings)
@@ -272,7 +270,6 @@ def full_cycle(settings: Settings = Depends(get_settings)) -> dict:
       5. budget_gate       — approves / rejects DRAFT POs against the budget
       6. invoice_simulator — generates one synthetic invoice for an APPROVED PO
       7. reconciler        — flips NEW reconciliation rows to OK / REVIEW / DISPUTE
-      8. onboarding        — scores any NEW supplier applications
     """
     out: dict[str, Any] = {}
     out["negotiator_draft"] = run_negotiator_once(settings)
@@ -296,5 +293,4 @@ def full_cycle(settings: Settings = Depends(get_settings)) -> dict:
     out["budget_gate"] = run_budget_gate(settings)
     out["invoice_simulator"] = simulate_invoice_for_po(settings)
     out["reconciler"] = run_reconciler(settings)
-    out["onboarding"] = run_onboarding(settings)
     return out

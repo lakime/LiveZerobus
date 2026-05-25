@@ -9,7 +9,6 @@ import RecommendationsTable from "./components/RecommendationsTable";
 import EmailPanel from "./components/EmailPanel";
 import PoDraftsPanel from "./components/PoDraftsPanel";
 import BudgetPanel from "./components/BudgetPanel";
-import OnboardingPanel from "./components/OnboardingPanel";
 import InvoicesPanel from "./components/InvoicesPanel";
 import AgentRunsPanel from "./components/AgentRunsPanel";
 import SapPanel from "./components/SapPanel";
@@ -21,7 +20,7 @@ import HealthPanel from "./components/HealthPanel";
 
 const REFRESH_MS = 3000;
 
-type Tab = "dashboard" | "emails" | "po" | "onboarding" | "invoices" | "runs" | "sap" | "sap-bdc" | "iot" | "pipeline" | "health" | "genie";
+type Tab = "dashboard" | "emails" | "po" | "invoices" | "runs" | "sap" | "sap-bdc" | "iot" | "pipeline" | "health" | "genie";
 
 function RefreshBar({ onRefresh }: { onRefresh: () => void }) {
   const [lastTs, setLastTs] = useState(() => new Date());
@@ -91,7 +90,6 @@ export default function App() {
         <Tab id="dashboard"  on={tab} onSet={setTab}>Dashboard</Tab>
         <Tab id="emails"     on={tab} onSet={setTab}>Emails</Tab>
         <Tab id="po"         on={tab} onSet={setTab}>POs &amp; Budget</Tab>
-        <Tab id="onboarding" on={tab} onSet={setTab}>Supplier onboarding</Tab>
         <Tab id="invoices"   on={tab} onSet={setTab}>Invoices</Tab>
         <Tab id="runs"       on={tab} onSet={setTab}>Agent runs</Tab>
         <Tab id="sap"        on={tab} onSet={setTab}>SAP P2P</Tab>
@@ -153,16 +151,6 @@ export default function App() {
             <h2>Budget ledger</h2>
             <BudgetPanel tick={tick} />
           </div>
-        </section>
-      )}
-
-      {tab === "onboarding" && (
-        <section className="card">
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-            <h2 style={{ margin:0 }}>Supplier onboarding</h2>
-            <RefreshBar onRefresh={manualRefresh} />
-          </div>
-          <OnboardingPanel tick={tick} />
         </section>
       )}
 
