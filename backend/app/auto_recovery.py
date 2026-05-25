@@ -1,76 +1,36 @@
-"""Self-healing for the livezerobus dashboard data path.
+"""Background self-heal for the dashboard data path.
 
-The dashboard reads from Lakebase Postgres synced tables. Two things go wrong
-without manual intervention:
+After the dashboard read path was moved to query Gold MVs directly via the
+SQL warehouse, the only remaining failure mode is the Lakeflow pipeline
+auto-terminating after idle — Gold MVs then stop refreshing. This module
+detects that and kicks a new pipeline update.
 
-1. The Lakeflow pipeline auto-terminates after idle and Gold MVs stop
-   refreshing. Cold-start takes 7-10 min.
-2. The Lakebase synced tables (SNAPSHOT policy) randomly stop snapshotting
-   and lock onto an old version — Gold can be fresh but Lakebase stays
-   stuck.
-
-This module runs both checks on backend startup and again every 5 minutes
-in the background. When it detects either failure mode it triggers the
-appropriate recovery (pipeline start-update / synced-table recreate).
-
-All work happens in a background thread so the FastAPI app boot is never
-blocked. Failures are swallowed and logged — the dashboard keeps working
-even if recovery is unavailable.
+Lakebase synced tables are no longer in the read path (data.py now goes
+warehouse → Gold MV directly) so we don't try to manage them here.
 """
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
-import urllib.error
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 log = logging.getLogger(__name__)
 
-# ── Constants (mirror scripts/reset_synced_tables.py) ─────────────────────
-
 PIPELINE_ID = "4cef05ca-ea6f-4217-af60-6b75a6b1a3f4"
 CATALOG = "livezerobus"
 SCHEMA = "procurement"
-PGHOST = "ep-frosty-flower-e2o5hjfp.database.westeurope.azuredatabricks.net"
-PGDATABASE = "databricks_postgres"
-ENDPOINT = "projects/myzerobus/branches/production/endpoints/primary"
-BRANCH = "projects/myzerobus/branches/production"
-APP_SP = "c4352007-a55b-4da5-b5c9-f4c8df89e58a"
 
-# How stale Gold MV freshness has to be before we trigger the pipeline.
-GOLD_STALE_THRESHOLD = timedelta(minutes=15)
+# Trigger a pipeline update if MAX(Gold.event_ts) lags more than this.
+GOLD_STALE_THRESHOLD = timedelta(minutes=10)
 
-# How stale Lakebase tables have to be relative to Gold before we reset.
-SYNC_STALE_THRESHOLD = timedelta(minutes=15)
-
-# Interval between background heal cycles.
 LOOP_INTERVAL_S = 300  # 5 min
 
-# Map of Lakebase synced table → (source Gold MV, primary key columns).
-TABLES: dict[str, tuple[str, list[str]]] = {
-    "commodity_prices_latest":     ("gd_commodity_latest",            ["input_key"]),
-    "demand_1h":                   ("gd_demand_1h",                   ["sku", "hour_ts"]),
-    "inventory_snapshot":          ("gd_inventory_snapshot",          ["sku", "room_id"]),
-    "supplier_leaderboard":        ("gd_supplier_leaderboard",        ["sku", "supplier_id"]),
-    "procurement_recommendations": ("gd_procurement_recommendations", ["recommendation_id"]),
-    "iot_sensor_latest":           ("gd_iot_sensor_latest",           ["room_id", "sensor_type"]),
-    "sap_po_lines":                ("gd_sap_open_po_lines",           ["po_number", "po_item"]),
-    "sap_invoice_matching":        ("gd_sap_invoice_matching",        ["invoice_doc_number"]),
-}
-
-# The timestamp column on each Gold MV / synced table we compare to detect
-# drift. Tables without a usable timestamp column are skipped — they still
-# get reset if they fail outright, just not on a freshness comparison.
-TIMESTAMP_COL: dict[str, str] = {
-    "commodity_prices_latest": "event_ts",
-    "demand_1h":               "hour_ts",
-    "inventory_snapshot":      "last_event_ts",
-    "supplier_leaderboard":    "quote_ts",
-}
+# A representative Gold MV used to detect staleness — picks up new
+# simulator output within seconds of the pipeline running.
+HEALTH_TABLE = "gd_commodity_latest"
+HEALTH_TS_COL = "event_ts"
 
 
 # ── Public state for /api/admin/recovery/status ───────────────────────────
@@ -82,7 +42,7 @@ _state: dict[str, Any] = {
     "last_cycle_finished": None,
     "last_action": None,
     "last_error": None,
-    "actions": [],   # last 20 actions (timestamp + message)
+    "actions": [],   # last 20 actions
 }
 
 
@@ -109,11 +69,7 @@ def _record_error(e: Exception) -> None:
         _state["last_error"] = f"{type(e).__name__}: {e}"
 
 
-# ── Workspace client (lazy) ───────────────────────────────────────────────
-
 def _client():
-    """Lazy-import to keep main app boot fast and avoid import-time errors
-    if databricks-sdk is misconfigured."""
     from databricks.sdk import WorkspaceClient
     return WorkspaceClient()
 
@@ -121,7 +77,6 @@ def _client():
 # ── Pipeline ──────────────────────────────────────────────────────────────
 
 def pipeline_state() -> dict[str, Any]:
-    """Return state of the Lakeflow pipeline."""
     p = _client().pipelines.get(PIPELINE_ID)
     latest = (p.latest_updates or [None])[0]
     return {
@@ -133,12 +88,10 @@ def pipeline_state() -> dict[str, Any]:
 
 
 def trigger_pipeline_if_needed() -> bool:
-    """If the pipeline has no recent successful update, kick a new one.
-    Returns True if a new update was triggered."""
+    """Trigger a new update if none is already running."""
     try:
         w = _client()
         p = w.pipelines.get(PIPELINE_ID)
-        # If a non-failed update is already in flight, leave it.
         latest = (p.latest_updates or [None])[0]
         if latest and str(latest.state) in (
             "UpdateInfoState.WAITING_FOR_RESOURCES",
@@ -158,104 +111,13 @@ def trigger_pipeline_if_needed() -> bool:
         return False
 
 
-# ── Lakebase synced tables ────────────────────────────────────────────────
+# ── Gold freshness via SQL warehouse ──────────────────────────────────────
 
-def _delete_synced_table(name: str) -> None:
-    host = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
-    # Mint a fresh PAT-ish token via the WorkspaceClient config.
-    w = _client()
-    auth = w.config.authenticate()
-    token = auth.get("Authorization", "").removeprefix("Bearer ")
-    url = f"{host}/api/2.0/database/synced_tables/{CATALOG}.{SCHEMA}.{name}"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"}, method="DELETE")
-    try:
-        urllib.request.urlopen(req, timeout=30).read()
-    except urllib.error.HTTPError as e:
-        if e.code != 404:
-            raise
-
-
-def _drop_pg_table(name: str) -> None:
-    import psycopg
-    w = _client()
-    pg_user = os.environ.get("PGUSER", APP_SP)
-    cred = w.postgres.generate_database_credential(endpoint=ENDPOINT).token
-    with psycopg.connect(
-        host=PGHOST, port=5432, dbname=PGDATABASE,
-        user=pg_user, password=cred, sslmode="require",
-    ) as conn, conn.cursor() as cur:
-        cur.execute(f"DROP TABLE IF EXISTS {SCHEMA}.{name} CASCADE")
-        conn.commit()
-
-
-def _grant_pg_table(name: str, retries: int = 12, sleep_s: float = 5.0) -> bool:
-    """Grant SELECT (and ALL) on the freshly-created Postgres table to the
-    app service principal. The synced-table initial snapshot lands
-    asynchronously after create_synced_table() returns, so retry until
-    the table appears in information_schema."""
-    import psycopg
-    w = _client()
-    pg_user = os.environ.get("PGUSER", APP_SP)
-    for attempt in range(1, retries + 1):
-        cred = w.postgres.generate_database_credential(endpoint=ENDPOINT).token
-        with psycopg.connect(
-            host=PGHOST, port=5432, dbname=PGDATABASE,
-            user=pg_user, password=cred, sslmode="require",
-        ) as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
-                "WHERE table_schema = %s AND table_name = %s)", (SCHEMA, name),
-            )
-            if cur.fetchone()[0]:
-                cur.execute(f'GRANT ALL ON {SCHEMA}.{name} TO "{APP_SP}"')
-                conn.commit()
-                return True
-        time.sleep(sleep_s)
-    return False
-
-
-def reset_synced_table(name: str) -> bool:
-    """Full DELETE + DROP + CREATE recovery for one synced table.
-    Returns True if recreate was issued."""
-    if name not in TABLES:
-        return False
-    source_mv, pks = TABLES[name]
-    try:
-        _delete_synced_table(name)
-        _drop_pg_table(name)
-        from databricks.sdk.service import postgres as pg
-        spec = pg.SyncedTableSyncedTableSpec(
-            source_table_full_name=f"{CATALOG}.{SCHEMA}.{source_mv}",
-            primary_key_columns=pks,
-            scheduling_policy=pg.SyncedTableSyncedTableSpecSyncedTableSchedulingPolicy("SNAPSHOT"),
-            branch=BRANCH,
-            postgres_database=PGDATABASE,
-            create_database_objects_if_missing=True,
-        )
-        _client().postgres.create_synced_table(
-            synced_table=pg.SyncedTable(spec=spec),
-            synced_table_id=f"{CATALOG}.{SCHEMA}.{name}",
-        )
-        # Without GRANT the dashboard returns empty results — the app SP
-        # owns the read path but has no privileges on a freshly-created table.
-        granted = _grant_pg_table(name)
-        if granted:
-            _record(f"reset + grant: {name}")
-        else:
-            _record(f"reset OK but GRANT timed out: {name}")
-        return True
-    except Exception as e:
-        _record_error(e)
-        return False
-
-
-# ── Freshness checks via SQL warehouse ────────────────────────────────────
-
-def _run_sql(sql: str) -> list[dict]:
-    """Run a SELECT against the SQL warehouse. Returns list-of-dicts."""
+def _run_sql(sql: str) -> list[dict[str, Any]]:
+    import os
+    from databricks.sdk.service.sql import StatementState
     warehouse_id = os.environ.get("SAP_BDC_WAREHOUSE_ID") or "6a1fb3b32b00f1cd"
     w = _client()
-    from databricks.sdk.service.sql import StatementState
     r = w.statement_execution.execute_statement(
         warehouse_id=warehouse_id, statement=sql, wait_timeout="30s",
     )
@@ -268,28 +130,13 @@ def _run_sql(sql: str) -> list[dict]:
     return [dict(zip(cols, row)) for row in (r.result.data_array or [])]
 
 
-def check_freshness() -> dict[str, Any]:
-    """Compare Gold MV latest_ts vs Lakebase synced table latest_ts.
-    Per-table so a single permission / missing-table error doesn't break
-    the whole check (some tables may not be synced yet, e.g. iot_sensor_latest)."""
-    out: dict[str, Any] = {}
-    for name, (mv, _pks) in TABLES.items():
-        ts = TIMESTAMP_COL.get(name)
-        if not ts:
-            continue
-        info: dict[str, Any] = {}
-        try:
-            rows = _run_sql(f"SELECT MAX({ts}) AS gold_ts FROM {CATALOG}.{SCHEMA}.{mv}")
-            info["gold_ts"] = rows[0].get("gold_ts") if rows else None
-        except Exception as e:
-            info["gold_error"] = str(e)[:120]
-        try:
-            rows = _run_sql(f"SELECT MAX({ts}) AS sync_ts FROM {CATALOG}.{SCHEMA}.{name}")
-            info["sync_ts"] = rows[0].get("sync_ts") if rows else None
-        except Exception as e:
-            info["sync_error"] = str(e)[:120]
-        out[name] = info
-    return out
+def gold_freshness() -> dict[str, Any]:
+    """Return latest_ts on the canary Gold MV."""
+    try:
+        rows = _run_sql(f"SELECT MAX({HEALTH_TS_COL}) AS latest FROM {CATALOG}.{SCHEMA}.{HEALTH_TABLE}")
+        return {"latest": rows[0].get("latest") if rows else None}
+    except Exception as e:
+        return {"error": str(e)[:200]}
 
 
 # ── Heal cycle ────────────────────────────────────────────────────────────
@@ -300,51 +147,33 @@ def _parse(ts) -> datetime | None:
     if isinstance(ts, datetime):
         return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
     try:
-        s = str(ts).replace("Z", "+00:00")
-        return datetime.fromisoformat(s)
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
     except Exception:
         return None
 
 
 def run_recovery_cycle() -> dict[str, Any]:
-    """One pass of: (1) trigger pipeline if Gold stale, (2) reset stuck
-    synced tables. Safe to call concurrently or repeatedly."""
+    """One pass: kick the pipeline if Gold MVs are stale. Idempotent."""
     with _state_lock:
         _state["last_cycle_started"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         _state["last_error"] = None
-    summary: dict[str, Any] = {"pipeline_kicked": False, "tables_reset": []}
+
+    summary: dict[str, Any] = {"pipeline_kicked": False}
 
     try:
-        ps = pipeline_state()
-        summary["pipeline"] = ps
-
-        # Pipeline trigger if Gold is stale.
-        freshness = check_freshness()
-        summary["freshness"] = freshness
+        fr = gold_freshness()
+        summary["gold_freshness"] = fr
+        latest = _parse(fr.get("latest"))
         now = datetime.now(timezone.utc)
-
-        gold_stale = False
-        for name, info in freshness.items():
-            gold = _parse(info.get("gold_ts"))
-            if gold is None or (now - gold) > GOLD_STALE_THRESHOLD:
-                gold_stale = True
-                break
-        if gold_stale:
-            _record(f"Gold MV is stale (> {GOLD_STALE_THRESHOLD}); triggering pipeline")
+        if latest is None or (now - latest) > GOLD_STALE_THRESHOLD:
+            _record(
+                f"Gold MV is stale (latest={fr.get('latest')}, threshold={GOLD_STALE_THRESHOLD});"
+                " triggering pipeline"
+            )
             if trigger_pipeline_if_needed():
                 summary["pipeline_kicked"] = True
-
-        # Reset stuck synced tables.
-        for name, info in freshness.items():
-            gold = _parse(info.get("gold_ts"))
-            sync = _parse(info.get("sync_ts"))
-            if gold is None:
-                continue
-            drift = (gold - sync) if sync else timedelta(days=365)
-            if drift > SYNC_STALE_THRESHOLD:
-                _record(f"Lakebase {name} drifted by {drift}; resetting")
-                if reset_synced_table(name):
-                    summary["tables_reset"].append(name)
+        else:
+            _record(f"Gold MV is fresh ({fr.get('latest')}); no action")
     except Exception as e:
         _record_error(e)
     finally:
@@ -360,7 +189,7 @@ _loop_lock = threading.Lock()
 
 
 def start_background_loop() -> None:
-    """Idempotent — only starts the heal thread once per process."""
+    """Idempotent — start the heal thread once per process."""
     global _loop_started
     with _loop_lock:
         if _loop_started:
@@ -368,8 +197,7 @@ def start_background_loop() -> None:
         _loop_started = True
 
     def _loop():
-        # First run after a small delay so app boot completes first.
-        time.sleep(20)
+        time.sleep(20)  # let app finish boot
         while True:
             if _state.get("enabled"):
                 try:

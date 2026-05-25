@@ -23,9 +23,10 @@ def recovery_status() -> dict:
 
 @router.get("/recovery/freshness")
 def recovery_freshness() -> dict:
-    """Per-table drift between Gold MV and Lakebase synced table."""
+    """Freshness of the canary Gold MV. Dashboard reads Gold directly now;
+    the only failure mode is the Lakeflow pipeline being down."""
     try:
-        return {"freshness": auto_recovery.check_freshness()}
+        return {"gold": auto_recovery.gold_freshness()}
     except Exception as e:
         return {"error": str(e)[:300]}
 
