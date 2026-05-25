@@ -266,17 +266,32 @@ def simulate_supplier_reply(
     except LLMError as e:
         return {"error": str(e)}
 
+    # Pre-populate intent_detected + extracted_json from the persona JSON so
+    # the second LLM extraction in _process_inbound doesn't have to re-derive
+    # them from prose. The persona body_md often says "competitive pricing"
+    # without a concrete number, and then the extraction LLM returns
+    # unit_price_usd=null, which kills the po_drafter flow.
+    intent = str(data.get("intent") or "QUOTE").upper()
+    extracted = json.dumps({
+        "intent_detected": intent,
+        "unit_price_usd": data.get("quoted_unit_price_usd"),
+        "pack_size_g": data.get("pack_size_g"),
+        "lead_time_days": data.get("lead_time_days"),
+        "organic": data.get("organic"),
+        "notes": "auto-populated from supplier persona JSON",
+    })
     email_id = _new_id("IN")
     db.execute(
         settings,
         """INSERT INTO procurement.email_inbox
              (email_id, thread_id, received_ts, supplier_id, supplier_email,
               subject, body_md, sku, intent_detected, extracted_json, processed)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,NULL,NULL,FALSE)""",
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE)""",
         [email_id, thread_id, _now(), thread["supplier_id"],
          thread["supplier_email"],
          str(data.get("subject", "Re: " + thread["subject"])),
-         str(data.get("body_md", "")), thread["sku"]],
+         str(data.get("body_md", "")), thread["sku"],
+         intent, extracted],
     )
     _record_run(
         settings, "supplier_persona", thread_id, email_id,
